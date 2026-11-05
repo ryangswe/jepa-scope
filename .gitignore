@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+dist/
+
+# Web viewer
+web/node_modules/
+# Built viewer. scripts/build.sh puts it here before packaging so the wheel ships it.
+src/jepa_scope/static/
+
+# Outputs and test media
+*.latent
+*.mp4
+*.mov
+*.webm
