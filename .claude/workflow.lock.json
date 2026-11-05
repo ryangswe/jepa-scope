@@ -1,0 +1,18 @@
+{
+  "excluded": [],
+  "files": {
+    ".claude/agents/architect.md": "48fe7a09c04c46670265be39dab3c2f1152f84ee8e36875f0c7aabd99db91631",
+    ".claude/agents/executor.md": "2751d168f860ebb595301f4c08f8a7b2a303b64f3781716d516b35f8fc282cc9",
+    ".claude/agents/explore.md": "5ad8a5c9ea6d6975e572c0faaff6db9bc1345393eb1cce23392be2c3fc7c6693",
+    ".claude/agents/planner.md": "9b96c1c3be5cd8b220502ae437a14dc9e0c6c8e7b74ad01ecb386d323025f0c9",
+    ".claude/agents/reviewer.md": "d79012452a4a177372e58b30ce86df7a7db23dc162b8e43cbfdc4a33c9fe61be",
+    ".claude/hooks/guard-default-branch.py": "694d4a65cced3879ee6e125a6d039d60c572a8c7e6b205654d19dc4f7f03aba2",
+    ".claude/skills/checkpoint/SKILL.md": "e773f095fca977e9872d0b7c13cc7918b065443de8095896d0097aeb07c1e739",
+    ".claude/skills/handoff/SKILL.md": "a1710e7a140476f138537e7d0080e01e98fe3702f61a4ec2f9eae19ecea75e59",
+    ".claude/skills/parallel-work/SKILL.md": "da50f448eef1afb036b2df00a437236995e693b063931641016628692fc012eb",
+    ".claude/workflow/check.py": "c3e23ff58df8e13365d69c85a5a54d1bfbc9557f08d745e426426715e09d6220",
+    "docs/plans/_template.md": "88964018a9ae3f890d005940663373d78ad062c50b92dd2f2d80bb28b5f3b259"
+  },
+  "kit": "a622a54 2026-10-24",
+  "level": "full"
+}

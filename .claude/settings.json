@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-default-branch.py\"",
+            "timeout": 15,
+            "statusMessage": "Checking branch before edit"
+          }
+        ]
+      }
+    ]
+  }
+}

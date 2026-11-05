@@ -52,6 +52,15 @@ jobs:
       - name: Test
         run: uv run --no-sync pytest -q -rs
 
+  workflow:
+    name: Workflow check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # CLAUDE.md budget, decisions index format, skills and the plans' active list.
+      - run: python3 .claude/workflow/check.py
+
   viewer-and-wheel:
     name: Viewer and wheel
     runs-on: ubuntu-latest

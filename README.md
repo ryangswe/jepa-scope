@@ -150,14 +150,10 @@ arrays once, so scrubbing only changes a uniform.
 
 The first week's milestones are done. The model runs on a laptop, the token grid is pinned by a
 test, the PCA overlay and surprise timeline work, the file format is defined, and the viewer runs
-in the browser.
-
-Next up:
-
-- A 3D view of each clip's path through latent space, synced to playback.
-- Nearest-neighbour search across a folder of clips, using the pooled embeddings.
-- Health checks for a set of embeddings, such as effective rank and per-dimension variance.
-- Adapters for other encoders behind the same file format, starting with `eb_jepa` models.
+in the browser. [docs/roadmap.md](docs/roadmap.md) has the full programme: the developer
+bottleneck this addresses, the missing toolchain layers, the three planned tools of which
+jepa-scope is the first, and what comes next. Settled design choices and their reasons are in
+[docs/decisions.md](docs/decisions.md).
 
 ## License
 
