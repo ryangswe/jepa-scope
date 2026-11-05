@@ -1,5 +1,7 @@
 # jepa-scope
 
+[![CI](https://github.com/ryangswe/jepa-scope/actions/workflows/ci.yml/badge.svg)](https://github.com/ryangswe/jepa-scope/actions/workflows/ci.yml)
+
 jepa-scope shows you what a JEPA video encoder sees. Point it at a video and it opens a local viewer
 with the model's patch features drawn over the picture, plus a timeline of how surprised the model
 was by each moment. It runs Meta's pre-trained V-JEPA 2 on a laptop, so you need no training run, no
