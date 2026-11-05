@@ -1,0 +1,6 @@
+{
+  "claude_md_max_bytes": 14336,
+  "decisions_index_max_bytes": 20000,
+  "decisions_line_max_chars": 250,
+  "branch_guard_exempt": []
+}

@@ -16,3 +16,7 @@ src/jepa_scope/static/
 *.mp4
 *.mov
 *.webm
+
+# Claude Code: per-machine settings and agent worktrees
+.claude/settings.local.json
+.claude/worktrees/
