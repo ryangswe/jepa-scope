@@ -18,7 +18,9 @@ from safetensors import SafetensorError, safe_open
 from safetensors.numpy import load_file, save_file
 
 FORMAT = "jepa-scope.latent"
-FORMAT_VERSION = 1
+# Version 2 (2026-11-06) added the `timeline_pooled` tensor and the `representation` header block.
+# Files of another version are refused; the cache re-embeds them.
+FORMAT_VERSION = 2
 META_KEY = "jepa_scope"
 
 REQUIRED_HEADER_KEYS = (
@@ -32,8 +34,10 @@ REQUIRED_HEADER_KEYS = (
     "crop",
     "source",
     "run",
+    "representation",
 )
-TIMELINE_KEYS = ("timeline_time", "timeline_window", "timeline_pca_rgb", "timeline_surprise")
+TIMELINE_KEYS = ("timeline_time", "timeline_window", "timeline_pca_rgb", "timeline_surprise", "timeline_pooled")
+TOKEN_LAYER = "encoder.last_hidden_state"
 
 
 class LatentFileError(ValueError):
@@ -48,8 +52,57 @@ def file_sha256(path: str | Path) -> str:
     return h.hexdigest()
 
 
+def representation_hash(block: dict[str, Any]) -> str:
+    """Hash of a representation block's fields (everything except ``hash`` itself).
+
+    The canonical form is JSON with keys sorted, no whitespace (``,`` and ``:`` separators), ASCII
+    escapes, and floats written as Python writes them (``8.0``); the hash is the first 16 hex
+    characters of its SHA-256.
+    """
+    fields = {k: v for k, v in block.items() if k != "hash"}
+    text = json.dumps(fields, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def representation(
+    *,
+    model_id: str,
+    weights: str,
+    hidden_size: int,
+    preprocess_hash: str,
+    window: int,
+    sample_fps: float,
+    output_version: int,
+) -> dict[str, Any]:
+    """The canonical description of what a window vector is, with a hash over it.
+
+    Two files whose blocks have the same hash hold vectors made the same way: the same weights,
+    preprocessing, token layer, normalisation, pooling and windowing. ``weights`` identifies the
+    weights by content (see ``model.weights_identity``), not by a version label.
+    """
+    block = {
+        "model_id": model_id,
+        "weights": weights,
+        "hidden_size": int(hidden_size),
+        "preprocess_hash": preprocess_hash,
+        "token_layer": TOKEN_LAYER,
+        "token_norm": "none",
+        "pooling": "mean_all",
+        "window": {
+            "frames": int(window),
+            "stride": int(window) // 2,
+            "context_frames": int(window) // 2,
+            "sample_fps": float(sample_fps),
+        },
+        "output_version": int(output_version),
+    }
+    return {**block, "hash": representation_hash(block)}
+
+
 def save(path: str | Path, tensors: dict[str, np.ndarray], header: dict[str, Any]) -> None:
-    header = {"format": FORMAT, "format_version": FORMAT_VERSION, **header}
+    """Write a file in the current format. The current ``format`` and ``format_version`` always win
+    over the caller's header, so saving never writes an old version number."""
+    header = {**header, "format": FORMAT, "format_version": FORMAT_VERSION}
     _check_header(header)
     contiguous = {k: np.ascontiguousarray(v) for k, v in tensors.items()}
     # Write next to the target and rename, so an interrupted write never leaves a half file behind.
@@ -101,6 +154,7 @@ def check_tensors(tensors: dict[str, np.ndarray], header: dict[str, Any]) -> Non
         "timeline_pca_rgb": (count, side, side, 3),
         "timeline_surprise": (count, side, side),
         "pooled": (windows, header["hidden_size"]),
+        "timeline_pooled": (count, header["hidden_size"]),
     }
     if "patches" in tensors:
         expected["patches"] = (
@@ -115,6 +169,11 @@ def check_tensors(tensors: dict[str, np.ndarray], header: dict[str, Any]) -> Non
             raise LatentFileError(f"{key} has shape {tuple(tensors[key].shape)}, expected {shape}")
     if tensors["timeline_pca_rgb"].dtype != np.uint8:
         raise LatentFileError("timeline_pca_rgb must be uint8")
+    for key in ("pooled", "timeline_pooled"):
+        if tensors[key].dtype != np.float32:
+            raise LatentFileError(f"{key} must be float32, not {tensors[key].dtype}")
+        if not np.isfinite(tensors[key]).all():
+            raise LatentFileError(f"{key} holds NaN or infinite values")
 
 
 def _check_header(header: dict[str, Any]) -> None:
@@ -122,8 +181,12 @@ def _check_header(header: dict[str, Any]) -> None:
         raise LatentFileError(f"not a {FORMAT} file (format={header.get('format')!r})")
     if header.get("format_version") != FORMAT_VERSION:
         raise LatentFileError(
-            f"format_version {header.get('format_version')} is not supported (expected {FORMAT_VERSION})"
+            f"format_version {header.get('format_version')} is not supported (expected {FORMAT_VERSION}); "
+            "re-embed the video with `jepa-scope embed`"
         )
     missing = [k for k in REQUIRED_HEADER_KEYS if k not in header]
     if missing:
         raise LatentFileError(f"header is missing {missing}")
+    block = header["representation"]
+    if not isinstance(block, dict) or block.get("hash") != representation_hash(block):
+        raise LatentFileError("the representation block does not match its hash")

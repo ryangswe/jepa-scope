@@ -18,7 +18,7 @@ def tiny_encoder():
     from transformers import VJEPA2Config, VJEPA2Model
     from transformers.models.vjepa2.video_processing_vjepa2 import VJEPA2VideoProcessor
 
-    from jepa_scope.model import Encoder
+    from jepa_scope.model import Encoder, ModelSource
 
     torch.manual_seed(0)
     cfg = VJEPA2Config(
@@ -35,7 +35,8 @@ def tiny_encoder():
     )
     model = VJEPA2Model(cfg)
     processor = VJEPA2VideoProcessor(crop_size=32)
-    return Encoder(model, processor, "test/tiny-vjepa2", torch.device("cpu"), torch.float32)
+    source = ModelSource("test/tiny-vjepa2", weights="random-seed-0", revision=None)
+    return Encoder(model, processor, "test/tiny-vjepa2", torch.device("cpu"), torch.float32, source=source)
 
 
 def write_video(path, frames: np.ndarray, fps: int = 24, rotation: int | None = None) -> None:

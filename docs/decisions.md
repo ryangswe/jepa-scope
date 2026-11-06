@@ -41,6 +41,7 @@ anything the code already shows.
 
 ## Process & tooling · `docs/decisions/process.md`
 
+- 2026-11-06 — Milestone plans get a second-model adversarial review, then an outside review, before approval; public result claims get an outside review first
 - 2026-11-05 — Cloud GPUs within the spending cap of an owner-approved plan need no further approval: log the price, run a watchdog, delete the pod
 - 2026-11-05 — Milestones follow the roadmap's weekly order; Week 2's scope landed in Week 1, so Weeks 3 and 4 come next
 - 2026-11-05 — Adopted the workflow kit at the full level, with its process files, the roadmap and this record published in the public repo

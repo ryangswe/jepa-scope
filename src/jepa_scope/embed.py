@@ -69,18 +69,22 @@ def embed_video(
         f"{len(starts)} windows of {window} frames on {encoder.device} ({encoder.dtype})"
     )
 
-    patches, pooled, surprise = [], [], []
+    patches, pooled, tubelet_means, surprise = [], [], [], []
     for i in range(0, len(starts), batch_size):
         batch = starts[i : i + batch_size]
         pixels = encoder.preprocess([video.frames[s : s + window] for s in batch])
         tokens = encoder.encode(pixels)
         err = encoder.surprise(pixels, tokens, context_frames=window // 2)
-        patches.append(to_grid(tokens.numpy(), spec).astype(np.float16))
+        grid = to_grid(tokens.numpy(), spec)  # float32 [B, T, H, W, D]
+        patches.append(grid.astype(np.float16))
+        # Per-tubelet means of the same float32 tokens `pooled` averages (token_norm "none").
+        tubelet_means.append(grid.mean(axis=(2, 3)))
         pooled.append(tokens.mean(dim=1).numpy())
         surprise.append(err.numpy().reshape(len(batch), spec.t - half, spec.h, spec.w))
         log(f"  windows {i + len(batch)}/{len(starts)}")
     patches_a = np.concatenate(patches)  # [W, T, H, W, D]
     pooled_a = np.concatenate(pooled)  # [W, D]
+    tubelet_means_a = np.concatenate(tubelet_means)  # [W, T, D]
     surprise_a = np.concatenate(surprise)  # [W, T/2, H, W]
     if not np.isfinite(patches_a).all() or not np.isfinite(surprise_a).all():
         raise RuntimeError("the model produced NaN or inf values; try --dtype float32")
@@ -89,6 +93,7 @@ def embed_video(
     n_tubelets = (starts[-1] + window) // encoder.tubelet
     owners = [timeline_owner(g, half) for g in range(n_tubelets)]
     tl_feats = np.stack([patches_a[w, j] for w, j in owners])  # [G, H, W, D]
+    tl_pooled = np.stack([tubelet_means_a[w, j] for w, j in owners]).astype(np.float32)  # [G, D]
     tl_surprise = np.stack(
         [surprise_a[w, j - half] if j >= half else np.full((spec.h, spec.w), np.nan, np.float32) for w, j in owners]
     ).astype(np.float32)
@@ -104,6 +109,7 @@ def embed_video(
         "timeline_window": np.asarray([w for w, _ in owners], dtype=np.int32),
         "timeline_pca_rgb": tl_rgb,
         "timeline_surprise": tl_surprise,
+        "timeline_pooled": tl_pooled,
     }
     if keep_patches:
         tensors["patches"] = patches_a
@@ -120,6 +126,7 @@ def embed_video(
             "tubelet_seconds": encoder.tubelet / sample_fps,
         },
         "preprocess": encoder.preprocess_info(),
+        "representation": encoder.representation(window, sample_fps),
         "crop": {"x": geom.x, "y": geom.y, "w": geom.w, "h": geom.h},
         "source": {
             "path": str(Path(video_path).resolve()),
@@ -136,6 +143,7 @@ def embed_video(
             "jepa_scope": __version__,
             "output_version": OUTPUT_VERSION,
             "device": str(encoder.device),
+            "model_revision": encoder.source.revision,
             "dtype": str(encoder.dtype).removeprefix("torch."),
             "seconds": round(time.perf_counter() - t0, 2),
         },

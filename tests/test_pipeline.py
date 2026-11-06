@@ -94,6 +94,19 @@ def test_embed_shapes(latent):
     assert header["grid"] == {"frames": 8, "crop": 32, "patch": 16, "tubelet": 2}
     assert header["preprocess"]["shortest_edge"] == 36
     assert len(header["preprocess"]["hash"]) == 16
+    tp = tensors["timeline_pooled"]
+    assert tp.shape == (12, 96) and tp.dtype == np.float32
+    # Each timeline tubelet's mean comes from the window that owns it (half = 2 tubelets here).
+    for g in range(12):
+        w, j = timeline_owner(g, 2)
+        expected = tensors["patches"][w, j].astype(np.float32).reshape(-1, 96).mean(0)
+        assert np.allclose(tp[g], expected, rtol=0, atol=2e-3), g
+    # Window 0 owns all its tubelets, so their means average to its pooled vector.
+    assert np.allclose(tp[:4].mean(0), tensors["pooled"][0], atol=1e-5)
+    rep = header["representation"]
+    assert rep["token_norm"] == "none" and rep["pooling"] == "mean_all"
+    assert rep["window"] == {"frames": 8, "stride": 4, "context_frames": 4, "sample_fps": 8.0}
+    assert rep["hash"] == latent_file.representation_hash(rep)
 
 
 def test_latent_file_rejects_plain_safetensors(tmp_path):
@@ -208,9 +221,10 @@ def test_truncated_cache_file_is_treated_as_missing(latent, tmp_path):
     broken.write_bytes(latent.read_bytes()[:-100])
     with pytest.raises(latent_file.LatentFileError):
         latent_file.load(broken)
-    assert cli._cache_is_valid(latent)
-    assert not cli._cache_is_valid(broken)
-    assert not cli._cache_is_valid(tmp_path / "missing.latent")
+    expected = latent_file.read_header(latent)["representation"]["hash"]
+    assert cli._cache_is_valid(latent, expected)
+    assert not cli._cache_is_valid(broken, expected)
+    assert not cli._cache_is_valid(tmp_path / "missing.latent", expected)
 
 
 @pytest.mark.parametrize(
@@ -219,8 +233,11 @@ def test_truncated_cache_file_is_treated_as_missing(latent, tmp_path):
         lambda t: t.update(pooled=t["pooled"][:-1]),
         lambda t: t.update(timeline_window=t["timeline_window"] + 50),
         lambda t: t.pop("window_start_time"),
+        lambda t: t.update(timeline_pooled=t["timeline_pooled"][:-1]),
+        lambda t: t["timeline_pooled"].__setitem__((0, 0), np.nan),
+        lambda t: t.update(pooled=t["pooled"].astype(np.float16)),
     ],
-    ids=["pooled-rows", "window-out-of-range", "no-window-times"],
+    ids=["pooled-rows", "window-out-of-range", "no-window-times", "timeline-pooled-rows", "nan", "dtype"],
 )
 def test_load_rejects_other_inconsistencies(latent, tmp_path, corrupt):
     tensors, header = latent_file.load(latent)
@@ -229,3 +246,170 @@ def test_load_rejects_other_inconsistencies(latent, tmp_path, corrupt):
     latent_file.save(bad, tensors, header)
     with pytest.raises(latent_file.LatentFileError):
         latent_file.load(bad)
+
+
+def _write_raw(path, tensors, header):
+    """Write a .latent file bypassing ``save``, which would restamp the format version."""
+    import json
+
+    from safetensors.numpy import save_file
+
+    save_file(
+        {k: np.ascontiguousarray(v) for k, v in tensors.items()}, str(path), metadata={"jepa_scope": json.dumps(header)}
+    )
+
+
+def test_save_writes_the_current_format_version(latent, tmp_path):
+    tensors, header = latent_file.load(latent)
+    out = tmp_path / "restamped.latent"
+    latent_file.save(out, tensors, {**header, "format_version": 1})
+    assert latent_file.read_header(out)["format_version"] == latent_file.FORMAT_VERSION == 2
+
+
+def test_an_older_format_is_refused_and_re_embedded(latent, tmp_path, capsys):
+    from jepa_scope import cli
+
+    tensors, header = latent_file.load(latent)
+    old = tmp_path / "v1.latent"
+    _write_raw(old, tensors, {**header, "format_version": 1})
+    for read in (latent_file.read_header, latent_file.load):
+        with pytest.raises(latent_file.LatentFileError, match="re-embed the video"):
+            read(old)
+    assert not cli._cache_is_valid(old, header["representation"]["hash"])
+    assert "re-embedding" in capsys.readouterr().out
+
+
+def test_cache_is_refused_for_another_output_version_or_representation(latent, capsys, monkeypatch):
+    from jepa_scope import cli
+
+    expected = latent_file.read_header(latent)["representation"]["hash"]
+    assert not cli._cache_is_valid(latent, "0" * 16)
+    assert "different representation" in capsys.readouterr().out
+    monkeypatch.setattr(cli, "OUTPUT_VERSION", 999)
+    assert not cli._cache_is_valid(latent, expected)
+    assert "another output version" in capsys.readouterr().out
+
+
+def test_an_edited_representation_block_is_refused(latent, tmp_path):
+    tensors, header = latent_file.load(latent)
+    edited = {**header, "representation": {**header["representation"], "pooling": "mean_predicted_half"}}
+    bad = tmp_path / "edited.latent"
+    _write_raw(bad, tensors, edited)
+    with pytest.raises(latent_file.LatentFileError, match="does not match its hash"):
+        latent_file.read_header(bad)
+
+
+def test_representation_hash_changes_with_every_field():
+    base = dict(
+        model_id="m",
+        weights="w",
+        hidden_size=96,
+        preprocess_hash="p",
+        window=8,
+        sample_fps=8.0,
+        output_version=2,
+    )
+    ref = latent_file.representation(**base)["hash"]
+    changes = dict(
+        model_id="m2",
+        weights="w2",
+        hidden_size=97,
+        preprocess_hash="p2",
+        window=16,
+        sample_fps=4.0,
+        output_version=3,
+    )
+    for key, value in changes.items():
+        assert latent_file.representation(**{**base, key: value})["hash"] != ref, key
+    block = latent_file.representation(**base)
+    for key in ("token_layer", "token_norm", "pooling"):
+        assert latent_file.representation_hash({**block, key: "other"}) != ref, key
+
+
+def test_describe_matches_the_loaded_encoder(tiny_encoder, tmp_path):
+    """The cache check describes the representation without loading weights; it must agree with
+    what embedding writes, or every run would re-embed (or reuse vectors from other weights)."""
+    from jepa_scope.model import Encoder, resolve_model
+
+    tiny_encoder.model.save_pretrained(tmp_path)
+    tiny_encoder.processor.save_pretrained(tmp_path)
+    source = resolve_model(str(tmp_path))
+    assert source.revision is None and source.model_id == str(tmp_path.resolve())
+    loaded = Encoder(
+        tiny_encoder.model,
+        tiny_encoder.processor,
+        str(tmp_path),
+        tiny_encoder.device,
+        tiny_encoder.dtype,
+        source=source,
+    )
+    assert Encoder.describe(str(tmp_path), None, 8, 8.0) == loaded.representation(8, 8.0)
+
+
+def test_retraining_into_the_same_folder_changes_the_weights_identity(tiny_encoder, tmp_path):
+    import os
+
+    from jepa_scope.model import resolve_model
+
+    tiny_encoder.model.save_pretrained(tmp_path)
+    before = resolve_model(str(tmp_path)).weights
+    weights = next(tmp_path.glob("*.safetensors"))
+    st = weights.stat()
+    os.utime(weights, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    assert resolve_model(str(tmp_path)).weights != before
+
+
+def _fake_hub(cache, commit, weights_blob, config=b"{}"):
+    """A Hugging Face cache entry for repo x/y, laid out as huggingface_hub writes one."""
+    repo = cache / "models--x--y"
+    (repo / "refs").mkdir(parents=True, exist_ok=True)
+    (repo / "refs" / "main").write_text(commit)
+    blobs = repo / "blobs"
+    blobs.mkdir(exist_ok=True)
+    (blobs / weights_blob).write_bytes(b"weights " + weights_blob.encode())
+    (blobs / "cfg").write_bytes(config)
+    snap = repo / "snapshots" / commit
+    snap.mkdir(parents=True)
+    (snap / "model.safetensors").symlink_to(f"../../blobs/{weights_blob}")
+    (snap / "config.json").symlink_to("../../blobs/cfg")
+
+
+def test_hub_weights_are_identified_by_content_not_commit(tmp_path):
+    from jepa_scope.model import resolve_model
+
+    c1, c2 = "1" * 40, "2" * 40
+    _fake_hub(tmp_path, c1, "a" * 64)
+    first = resolve_model("x/y", cache_dir=str(tmp_path))
+    assert first.revision == c1 and first.model_id == "x/y"
+    assert resolve_model("x/y", "main", cache_dir=str(tmp_path)) == first
+    assert resolve_model("x/y", c1, cache_dir=str(tmp_path)) == first
+    # A new commit with the same weight blob (say, an edited model card) keeps the identity.
+    _fake_hub(tmp_path, c2, "a" * 64)
+    second = resolve_model("x/y", cache_dir=str(tmp_path))
+    assert second.revision == c2 and second.weights == first.weights
+    # New weights change it.
+    _fake_hub(tmp_path, "3" * 40, "b" * 64)
+    assert resolve_model("x/y", cache_dir=str(tmp_path)).weights != first.weights
+
+
+def test_a_symlinked_local_weight_file_is_identified_by_what_it_points_to(tmp_path):
+    from jepa_scope.model import resolve_model
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    (runs / "model.safetensors").write_bytes(b"first weights")
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}")
+    (model / "model.safetensors").symlink_to(runs / "model.safetensors")
+    before = resolve_model(str(model)).weights
+    (runs / "model.safetensors").write_bytes(b"retrained weights, longer")
+    assert resolve_model(str(model)).weights != before
+
+
+def test_a_snapshot_without_weight_files_has_unknown_weights(tmp_path):
+    from jepa_scope.model import UNKNOWN_WEIGHTS, resolve_model
+
+    _fake_hub(tmp_path, "1" * 40, "a" * 64)
+    (tmp_path / "models--x--y" / "snapshots" / ("1" * 40) / "model.safetensors").unlink()
+    assert resolve_model("x/y", cache_dir=str(tmp_path)).weights == UNKNOWN_WEIGHTS

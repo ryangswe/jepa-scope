@@ -13,8 +13,11 @@ uv run jepa-scope clip.mp4
 
 The first run downloads the V-JEPA 2 ViT-L weights from Hugging Face (about 1.3 GB). After that, a
 10-second clip embeds in about 3.5 seconds on an M3 Max. Results are cached under `~/.cache/jepa-scope`, keyed by the
-video's hash, the settings, the device and dtype, and the jepa-scope version, so opening the same
-clip again is instant.
+video's hash, the settings, the device and dtype, and the jepa-scope output version, so opening the
+same clip again takes a few seconds (mostly loading libraries) instead of re-embedding. A cached
+file is reused only when its format version, output version and representation (described below)
+match what the current settings would produce; otherwise it is re-embedded in place, with a message
+saying why.
 
 ## Why this exists
 
@@ -87,10 +90,26 @@ tensors. The metadata holds one JSON header under the key `jepa_scope`, which re
 token grid, window settings, preprocessing recipe and hash, crop rectangle and source video hash.
 `jepa_scope.latent_file.load` checks that header before handing the tensors over.
 
+The header's `representation` block says exactly how a window vector was made: the model, an
+identity of its weights, the preprocessing hash, the token layer, the normalisation before pooling,
+the pooling, the window settings and the output version, with a hash over them. The weights are
+identified by content, not by a version label: for a downloaded model, by the content hashes
+Hugging Face stores for its files, so an upstream edit to the model card usually changes nothing
+(at most one clip is re-embedded while the new snapshot is filled in, and on systems where Hugging
+Face copies files instead of linking them, the copies' times stand in for the hashes); for a model
+in a local folder, by its config and each weight file's size and modification time. The
+snapshot's commit is recorded for information as `run.model_revision`. Two files with the same
+representation hash hold vectors made the same way. The device, dtype and `max_seconds` are
+recorded too (`run.device`, `run.dtype`, `source.max_seconds`); vectors from float16 and float32
+runs differ slightly, so the cache, which is keyed by them, reuses a file only when they match as
+well. The current format is version 2; a version-1 file is refused with a message to re-embed the
+video with `jepa-scope embed`.
+
 | Tensor | Shape | Meaning |
 | --- | --- | --- |
 | `patches` | `[windows, T, H, W, D]` float16 | Encoder output for every window, reshaped to its grid. Left out with `--no-patches` |
 | `pooled` | `[windows, D]` float32 | Mean over tokens, for search and simple classifiers |
+| `timeline_pooled` | `[tubelets, D]` float32 | Mean over each timeline tubelet's patches, from the same tokens as `pooled` |
 | `window_start_time` | `[windows]` | Start of each window in seconds |
 | `timeline_time` | `[tubelets]` | Start of each tubelet on the flattened timeline |
 | `timeline_window` | `[tubelets]` | Which window each timeline tubelet was taken from |

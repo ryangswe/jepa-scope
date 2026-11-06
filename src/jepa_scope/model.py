@@ -11,13 +11,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 
+from . import OUTPUT_VERSION, latent_file
 from .grid import GridSpec
 
 DEFAULT_MODEL = "facebook/vjepa2-vitl-fpc64-256"
@@ -53,11 +57,97 @@ class Geometry:
     h: float
 
 
+WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth")
+UNKNOWN_WEIGHTS = "unknown"
+_DIGEST = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+def _content_name(f: Path) -> str:
+    """A name for a weight file's content. A Hugging Face snapshot links each file to a blob named
+    by its hash, which is used as is. Anything else (an ordinary file, or a link to an ordinary
+    file such as a "latest" checkpoint) is described by the file it resolves to: path, size and
+    modification time, so replacing it changes the name."""
+    if f.is_symlink():
+        target = Path(os.readlink(f))
+        if target.parent.name == "blobs" and _DIGEST.fullmatch(target.name):
+            return target.name
+    st = f.stat()  # follows links
+    return f"{f.resolve()}:{st.st_size}:{st.st_mtime_ns}"
+
+
+def weights_identity(folder: Path) -> str:
+    """An identity for the weights in a model folder, from their content rather than a version label.
+
+    It hashes ``config.json``'s bytes and the content name of each weight file (see
+    ``_content_name``). A folder with no weight file, such as a snapshot where only the config has
+    been fetched so far, gives ``UNKNOWN_WEIGHTS``: the identity cannot be known without the
+    weights, and callers must load the model to find it.
+    """
+    weights = sorted(p for p in folder.iterdir() if p.suffix in WEIGHT_SUFFIXES)
+    if not weights:
+        return UNKNOWN_WEIGHTS
+    h = hashlib.sha256()
+    cfg = folder / "config.json"
+    h.update(cfg.read_bytes() if cfg.exists() else b"")
+    for f in weights:
+        h.update(f"{f.name}={_content_name(f)}\n".encode())
+    return h.hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class ModelSource:
+    """Where a model's files are, and what identifies its weights."""
+
+    model_id: str  # the Hub id, or the absolute path of a local folder
+    weights: str  # weights_identity of the folder
+    revision: str | None  # the snapshot's commit, for information; None for a local folder
+
+
+def resolve_model(model_id: str, revision: str | None = None, cache_dir: str | None = None) -> ModelSource:
+    """Find a model's local files and identify its weights. Hub files must already be cached."""
+    if Path(model_id).is_dir():
+        folder = Path(model_id).resolve()
+        return ModelSource(str(folder), weights_identity(folder), None)
+    from huggingface_hub import snapshot_download
+
+    folder = Path(snapshot_download(model_id, revision=revision, local_files_only=True, cache_dir=cache_dir))
+    return ModelSource(model_id, weights_identity(folder), folder.name)
+
+
+def _preprocess_info(processor, crop: int) -> dict:
+    """The preprocessing recipe, plus a hash so cached latents can be checked against it."""
+    p = processor
+    recipe = {
+        "processor": type(p).__name__,
+        "shortest_edge": int(p.size["shortest_edge"]) if p.size and "shortest_edge" in p.size else None,
+        "crop_size": crop,
+        "image_mean": [float(v) for v in p.image_mean],
+        "image_std": [float(v) for v in p.image_std],
+        "resample": str(p.resample),
+        # embed.py downscales at decode time (PyAV area averaging) to this shortest edge first.
+        "decode_resize": "area-to-shortest-edge",
+    }
+    digest = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()[:16]
+    return {**recipe, "hash": digest}
+
+
 class Encoder:
-    def __init__(self, model, processor, model_id: str, device: torch.device, dtype: torch.dtype):
+    def __init__(
+        self,
+        model,
+        processor,
+        model_id: str,
+        device: torch.device,
+        dtype: torch.dtype,
+        *,
+        source: ModelSource,
+    ):
+        """Build with :meth:`from_pretrained`. ``source`` identifies the weights; it must describe the
+        same files ``model`` was loaded from, or the cache check will disagree with the files."""
         self.model = model.eval()
         self.processor = processor
         self.model_id = model_id
+        self.source = source
         self.device = device
         self.dtype = dtype
         cfg = model.config
@@ -68,15 +158,55 @@ class Encoder:
 
     @classmethod
     def from_pretrained(
-        cls, model_id: str = DEFAULT_MODEL, device: str | None = None, dtype: str | None = None
+        cls,
+        model_id: str = DEFAULT_MODEL,
+        device: str | None = None,
+        dtype: str | None = None,
+        revision: str | None = None,
     ) -> Encoder:
         from transformers import AutoModel, AutoVideoProcessor
 
         dev = pick_device(device)
         dt = pick_dtype(dev, dtype)
-        model = AutoModel.from_pretrained(model_id, dtype=dt).to(dev)
-        processor = AutoVideoProcessor.from_pretrained(model_id)
-        return cls(model, processor, model_id, dev, dt)
+        model = AutoModel.from_pretrained(model_id, dtype=dt, revision=revision).to(dev)
+        processor = AutoVideoProcessor.from_pretrained(model_id, revision=revision)
+        return cls(model, processor, model_id, dev, dt, source=resolve_model(model_id, revision))
+
+    @classmethod
+    def describe(cls, model_id: str, revision: str | None, window: int, sample_fps: float) -> dict:
+        """The representation block :meth:`representation` would give, without loading weights.
+
+        It reads the config, the processor and the names, sizes and modification times of the
+        model's files, so the cache can be checked before deciding whether the model needs loading.
+        Its ``weights`` is ``UNKNOWN_WEIGHTS`` when the weight files are not in the local snapshot
+        yet; then only a loaded encoder's :meth:`representation` can say.
+        """
+        from transformers import AutoConfig, AutoVideoProcessor
+
+        cfg = AutoConfig.from_pretrained(model_id, revision=revision)
+        processor = AutoVideoProcessor.from_pretrained(model_id, revision=revision)
+        source = resolve_model(model_id, revision)
+        return latent_file.representation(
+            model_id=source.model_id,
+            weights=source.weights,
+            hidden_size=int(cfg.hidden_size),
+            preprocess_hash=_preprocess_info(processor, int(cfg.crop_size))["hash"],
+            window=window,
+            sample_fps=sample_fps,
+            output_version=OUTPUT_VERSION,
+        )
+
+    def representation(self, window: int, sample_fps: float) -> dict:
+        """What a window vector from this encoder is: the block ``embed_video`` writes to the header."""
+        return latent_file.representation(
+            model_id=self.source.model_id,
+            weights=self.source.weights,
+            hidden_size=self.hidden_size,
+            preprocess_hash=self.preprocess_info()["hash"],
+            window=window,
+            sample_fps=sample_fps,
+            output_version=OUTPUT_VERSION,
+        )
 
     def grid(self, frames: int) -> GridSpec:
         return GridSpec(frames=frames, crop=self.crop, patch=self.patch, tubelet=self.tubelet)
@@ -94,19 +224,7 @@ class Encoder:
 
     def preprocess_info(self) -> dict:
         """The preprocessing recipe, plus a hash so cached latents can be checked against it."""
-        p = self.processor
-        recipe = {
-            "processor": type(p).__name__,
-            "shortest_edge": int(p.size["shortest_edge"]) if p.size and "shortest_edge" in p.size else None,
-            "crop_size": self.crop,
-            "image_mean": [float(v) for v in p.image_mean],
-            "image_std": [float(v) for v in p.image_std],
-            "resample": str(p.resample),
-            # embed.py downscales at decode time (PyAV area averaging) to this shortest edge first.
-            "decode_resize": "area-to-shortest-edge",
-        }
-        digest = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()[:16]
-        return {**recipe, "hash": digest}
+        return _preprocess_info(self.processor, self.crop)
 
     def crop_geometry(self, width: int, height: int) -> Geometry:
         """Approximate crop rectangle of a resize-shortest-edge then center-crop pipeline."""
