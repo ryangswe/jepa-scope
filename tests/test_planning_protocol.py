@@ -270,15 +270,24 @@ class _BadEnergy(PointMass):
 @pytest.mark.parametrize(
     ("energy", "message"),
     [
-        (lambda e: torch.full_like(e, float("nan")), "NaN or infinite"),
-        (lambda e: torch.where(e > 30, torch.full_like(e, float("inf")), e), "NaN or infinite"),
+        (lambda e: torch.full_like(e, float("nan")), "100 of 100 candidate costs are NaN or infinite"),
         (lambda e: e[:1], "one cost per candidate"),
     ],
-    ids=["all_nan", "some_infinite", "wrong_shape"],
+    ids=["all_nan", "wrong_shape"],
 )
 def test_invalid_costs_fail_loudly(energy, message):
     with pytest.raises(ValueError, match=message):
         cem_plan(_BadEnergy(energy), torch.zeros(1, 2), torch.tensor([GOAL]), SMALL, generator=_generator())
+
+
+def test_a_few_invalid_costs_fail_loudly():
+    """Only the candidates whose final state ends far from the goal are infinite."""
+    last = dataclasses.replace(SMALL, objective="last")
+    some_infinite = _BadEnergy(lambda e: torch.where(e > e.median(), torch.full_like(e, float("inf")), e))
+    with pytest.raises(ValueError, match="candidate costs are NaN or infinite") as caught:
+        cem_plan(some_infinite, torch.zeros(1, 2), torch.tensor([GOAL]), last, generator=_generator())
+    invalid = int(str(caught.value).split(" of ")[0])
+    assert 0 < invalid < SMALL.num_samples
 
 
 def test_mismatched_start_and_goal_are_refused():
@@ -286,8 +295,13 @@ def test_mismatched_start_and_goal_are_refused():
         cem_plan(PointMass(), torch.zeros(1, 2), torch.zeros(1, 3), SMALL)
 
 
-def test_actions_are_float32_whatever_the_state_dtype():
-    plan = cem_plan(
-        PointMass(), torch.zeros(1, 2, dtype=torch.float64), torch.tensor([GOAL], dtype=torch.float64), SMALL
-    )
+def test_actions_are_float32_whatever_the_default_or_state_dtype():
+    previous = torch.get_default_dtype()
+    torch.set_default_dtype(torch.float64)  # without an explicit dtype, the planner would follow this
+    try:
+        plan = cem_plan(
+            PointMass(), torch.zeros(1, 2, dtype=torch.float64), torch.tensor([GOAL], dtype=torch.float64), SMALL
+        )
+    finally:
+        torch.set_default_dtype(previous)
     assert plan.actions.dtype == ACTION_DTYPE == torch.float32

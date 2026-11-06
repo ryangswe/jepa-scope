@@ -349,16 +349,27 @@ def test_replay_matches_the_native_evaluation(tmp_path, native_episodes):
         def __call__(self, obs, info, steps_left):
             return np.zeros(2, dtype=np.float32)
 
+    def frame(path):
+        # The top rows hold the frame label ("Frame 1/201" there, "Frame 1/1" here); skip them.
+        return np.asarray(Image.open(path).convert("RGB"), dtype=np.int16)[LABEL_ROWS:]
+
+    def differing(a, b):
+        return int((np.abs(a - b).max(axis=-1) > 16).sum())
+
     replayed = _run_episodes(StandStill(), EPISODES)
+    natives, ours = [], []
     for index, (episode, folder) in enumerate(zip(replayed, native_episodes, strict=True)):
         (native_gif,) = list(folder.glob("agent_steps_*.gif"))
         ours_gif = tmp_path / f"ep_{index}.gif"
         save_gif(episode.first_obs[None], save_path=str(ours_gif), show_frame_numbers=True, fps=20)
-        # The top rows hold the frame label ("Frame 1/201" there, "Frame 1/1" here); skip them.
-        native = np.asarray(Image.open(native_gif).convert("RGB"), dtype=np.int16)[LABEL_ROWS:]
-        ours = np.asarray(Image.open(ours_gif).convert("RGB"), dtype=np.int16)[LABEL_ROWS:]
-        differing = int((np.abs(native - ours).max(axis=-1) > 16).sum())
-        assert differing <= 4, f"episode {index}: {differing} first-frame pixels differ"
+        natives.append(frame(native_gif))
+        ours.append(frame(ours_gif))
+    for index in range(EPISODES):
+        assert differing(natives[index], ours[index]) <= 4, f"episode {index}: first frames differ"
+    # Negative control: pairing each replay with the next native episode must fail clearly.
+    shifted = [differing(natives[index + 1], ours[index]) for index in range(EPISODES - 1)]
+    print(f"\nReplay: shifted-by-one pairs differ in {min(shifted)} to {max(shifted)} pixels")
+    assert min(shifted) > 100
 
 
 def test_protocol_planning_matches_native_success(protocol_episodes, native_episodes):

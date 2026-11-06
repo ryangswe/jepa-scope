@@ -48,7 +48,9 @@ The three operations have these rules.
 
 ### Rules every adapter follows
 
-Planners rely on these, and the toy models in `tests/test_planning_protocol.py` check them.
+Planners rely on these. The packed-context toy model in `tests/test_planning_protocol.py` follows
+them, and its tests show the helpers working with such a model; there is not yet a check you can
+run against your own adapter.
 
 - **Inputs are read-only.** `predict` and `energy` never write into the tensors they are given,
   and a state they returned earlier never changes later. Planners branch many candidates from one
@@ -73,7 +75,8 @@ Planners rely on these, and the toy models in `tests/test_planning_protocol.py` 
 `action_dim` gives only the length of an action vector. Every adapter documents what an action
 means: the order of its coordinates, their units or normalisation, how much time one action
 covers (including any repeat), its bounds, and how a planned action is converted into the action
-an environment executes. A planner's settings must respect those bounds; `energy` does not.
+an environment executes. The planner's settings must keep actions within those bounds; `energy`
+does not enforce them.
 
 ## Rolling out and scoring a plan
 
@@ -256,8 +259,8 @@ run on a laptop CPU (Apple M3 Max, float32, torch 2.6.0).
   eb_jepa's.
 - **Same starting frames.** The test rebuilds eb_jepa's evaluation environment and replays its
   20 episodes with eb_jepa's reset procedure. Each replayed start frame (wall, door and dot)
-  matches the start frame eb_jepa saved for that episode, and shifting the pairing by one episode
-  makes every frame differ. Goals are not compared directly: eb_jepa saves them only in a PDF.
+  matches the start frame eb_jepa saved for that episode, and the test also checks that pairing
+  each replay with the next episode instead makes every frame differ (by 356 to 1,344 pixels). Goals are not compared directly: eb_jepa saves them only in a PDF.
   They come from the same generator calls as the start, but the test does not check them, and
   nothing here shows that the two runs' trajectories or wall-collision noise were the same.
 - **Closed-loop planning, an engineering check.** Planning through the protocol solved 16 of the
@@ -281,7 +284,7 @@ reference CEM reproduces native plans given the same noise. In a separate closed
 different device, it solved 16 of 20 tasks against 18 of 20 natively and passed the pre-set
 threshold. That does not establish non-inferiority.
 
-Provenance. The closed-loop run (82 minutes) used the code at commit `00e6919`. `plan_cost` has
+**Where the numbers come from.** The closed-loop run (82 minutes) used the code at commit `00e6919`. `plan_cost` has
 since been changed to add energies one step at a time, which changes its result by about 1e-7,
 and the same-noise check was added afterwards; both short checks were rerun on the later code. A
 protocol episode took 166 s on average. eb_jepa's own CEM took 805 s per episode on the same
