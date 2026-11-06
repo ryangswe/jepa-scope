@@ -16,7 +16,7 @@ jobs:
   python:
     name: Python ${{ matrix.python }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -39,10 +39,6 @@ jobs:
           uv export --frozen --no-hashes --no-emit-project -o "$RUNNER_TEMP/constraints.txt"
           uv venv
           uv pip install --torch-backend cpu -c "$RUNNER_TEMP/constraints.txt" -e . --group dev
-
-      # The rotation test writes rotation metadata with the ffmpeg CLI.
-      - name: Install ffmpeg
-        run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
 
       - name: Lint
         run: |

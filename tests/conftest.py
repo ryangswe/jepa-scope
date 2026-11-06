@@ -38,12 +38,18 @@ def tiny_encoder():
     return Encoder(model, processor, "test/tiny-vjepa2", torch.device("cpu"), torch.float32)
 
 
-def write_video(path, frames: np.ndarray, fps: int = 24) -> None:
-    """Write uint8 ``[T, H, W, 3]`` frames to an mp4 with PyAV."""
+def write_video(path, frames: np.ndarray, fps: int = 24, rotation: int | None = None) -> None:
+    """Write uint8 ``[T, H, W, 3]`` frames to an mp4 with PyAV.
+
+    ``rotation`` (degrees counter-clockwise) adds a display matrix, as a phone does. It is the
+    same matrix ``ffmpeg -display_rotation`` writes.
+    """
     with av.open(str(path), "w") as out:
         stream = out.add_stream("libx264", rate=fps)
         stream.width, stream.height = frames.shape[2], frames.shape[1]
         stream.pix_fmt = "yuv420p"
+        if rotation is not None:
+            stream.set_display_rotation(rotation)
         for f in frames:
             for packet in stream.encode(av.VideoFrame.from_ndarray(f, format="rgb24")):
                 out.mux(packet)
