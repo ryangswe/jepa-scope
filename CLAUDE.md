@@ -22,7 +22,7 @@ timeline. It is the first of three planned tools; the programme is in `docs/road
 
 - Install: `uv sync` and `cd web && npm ci`
 - Lint: `uv run ruff check src tests && uv run ruff format --check src tests`;
-  viewer `cd web && npx oxlint src`
+  viewer `cd web && npx oxlint --type-aware src`
 - Typecheck (viewer): `cd web && npx tsc -b`
 - Test: `uv run pytest -q`. Real weights (about 1.3 GB download, then cached):
   `JEPA_SCOPE_MODEL_TESTS=1 uv run pytest tests/test_real_model.py -s`
