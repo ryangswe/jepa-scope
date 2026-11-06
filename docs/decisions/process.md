@@ -5,6 +5,34 @@ Full rationale for this theme's decisions, newest first. The lean, auto-loaded i
 
 ---
 
+## 2026-11-06 — Milestone plans get an adversarial review by a second model and then an outside review before approval; measured results get an outside review before they become public claims
+
+**Status:** live, indexed
+
+**Context.** Week 1's outside review found claims stated more confidently than the evidence
+supported, after the work was done. Weeks 3 and 4's plan then went through a fresh adversarial
+review before any code existed, and it found two planned tests that could not fail and one built
+on a false assumption about how windows and the timeline relate.
+
+**Decision.** Reviews scale with how hard a mistake is to undo.
+- Every milestone plan: a fresh adversarial review by a different model from the one that wrote
+  it, a revision, an outside review (a model from another provider) of the revised plan, then the
+  owner's approval, all before code changes.
+- Measured results that will become public claims (README numbers, launch material): an outside
+  review of the evidence first. For results inside a milestone, only when they are borderline or
+  surprising; for launch material, always.
+- Design calls mid-task, a pass bar set mid-milestone, and a root cause after two failed fixes: a
+  second-model review, without asking the owner first.
+- Routine code changes: the existing fresh-context `reviewer` pass on every change, nothing more.
+
+**Rejected.**
+- *An outside review of every pull request.* Each round costs the owner time to hand over and
+  bring back, and routine changes are covered by the fresh-context reviewer.
+- *Outside reviews only after a milestone ends.* A plan's mistakes are cheapest to fix before
+  code exists.
+
+---
+
 ## 2026-11-05 — Milestones follow the roadmap's weekly order; Week 2's scope landed in Week 1, so Weeks 3 and 4 come next
 
 **Status:** live, indexed
