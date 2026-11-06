@@ -89,3 +89,16 @@ Plan: `2026-11-05-week1-two-rooms-protocol.md`. Entries are appended as work pro
   - **Impact:** the pass bar (at least 80%) is met. T4 uses this checkpoint. eb_jepa's README gives 96 ± 2% for CEM on random walls (its ablation table), where ± 2 is the spread of averages over 3 seeds and 3 checkpoints. 90% is 6 points below that, which is within the sampling error of one 20-episode evaluation (about 7 points), so it is not evidence of a broken setup.
   - **Resolution:** T2 complete.
   - **Permanent decision record needed:** No.
+
+- **2026-11-06 — T4: adapter written; parity is exact and the replay matches all 20 episodes.**
+  - **Evidence:**
+    - `EbJepaTwoRooms.from_run` loads `latest.pth.tar` with `weights_only=True` (no allowlist needed) and `strict=True` after dropping the `_orig_mod.` prefix (all 46 keys carry it) and the `regularizer.*` keys. Importing it does not import `eb_jepa.planning`.
+    - Parity against an independent `JEPA` loaded by eb_jepa's own `load_checkpoint(strict=True)`: the maximum absolute difference between `rollout` and `unroll` over 8 observations and 8 random actions is 0.0, and `plan_cost` equals `ReprTargetDistMPCObjective(sum_all_diffs=True)` with a maximum relative difference of 0.0. The bar was 1e-5.
+    - Replay: each replayed episode's first frame, drawn with eb_jepa's own `save_gif`, matches the first frame of that episode's GIF from T2 (0 differing pixels outside the frame label, limit 4). Pairing each replayed episode with the next native episode instead gives 356 to 1,344 differing pixels, so the check discriminates. The replay covers all 20 episodes' start frames (wall, door and start position); goal frames exist only in T2's PDFs and were not compared, but the goal is drawn from the same generator calls as the start.
+    - The environment's layouts come only from its own NumPy generator. Wall-collision noise uses torch's global generator, which the test seeds, and it does not change later layouts, so the pairing holds whatever the agent does.
+  - **Deviations:**
+    - The replay check compares GIF first frames with the 20-row label band masked, rather than `state.pdf`; the plan allowed the GIF frame.
+    - The episode loop lives in the test file; the plan named only the adapter and the test file, and no shared runner was needed.
+  - **Impact:** the paired success, greedy and untrained tests can be read as evidence once they finish.
+  - **Resolution:** the full opt-in suite runs on the laptop under `caffeinate -i`, logging to `~/Workspace/eb_jepa-lab/t4_run.log`.
+  - **Permanent decision record needed:** No.

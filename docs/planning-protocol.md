@@ -90,8 +90,50 @@ often as the model's own planner does on the same episodes.
 
 ## Adapters
 
-- **eb_jepa Two Rooms** (`facebookresearch/eb_jepa`, `examples/ac_video_jepa`). Pending; it is
-  added with its parity and planning checks in the next step of this work.
+### eb_jepa Two Rooms
+
+`EbJepaTwoRooms` in `eb_jepa_two_rooms.py` wraps the action-conditioned JEPA in
+`examples/ac_video_jepa` of `facebookresearch/eb_jepa` (checked at commit `966e61e`). In that
+task, a dot must cross a wall through a door to reach a goal position, and the model sees
+two-channel 65 × 65 images. Its latent is a 512-dimensional vector and its actions are 2D
+displacements. The three operations map onto the model as follows.
+
+- `encode` applies eb_jepa's Two Rooms `Normalizer` (a per-image min-max scaling followed by
+  fixed per-channel statistics) to a raw `[B, 2, 65, 65]` observation, as `DotWall` renders it.
+  It then runs the Impala encoder on the result as a one-frame clip and flattens its
+  `[B, 512, 1, 1, 1]` output to `[B, 512]`.
+- `predict` runs one step of the GRU predictor, with the action as the input and the latent as
+  the hidden state, and then applies the encoder's final LayerNorm, which the predictor shares.
+  The normalised output is the next latent. eb_jepa feeds it back as the next hidden state, so
+  the latent carries everything the next step needs and `predict` is stateless, as the protocol
+  requires. This is exactly one step of eb_jepa's `JEPA.unroll` in autoregressive mode.
+- `energy` is the mean squared difference over the 512 dimensions. It equals eb_jepa's
+  `ReprTargetDistMPCObjective` for one state. eb_jepa's README writes this cost with an L2 norm,
+  but its code takes the mean of the squares, and the adapter follows the code.
+
+`EbJepaTwoRooms.from_run(folder)` reads a run folder written by eb_jepa's training script. It
+rebuilds the encoder and predictor from the run's config, the way the training script builds
+them. It loads only their weights from `latest.pth.tar` (or another checkpoint you name), with
+`torch.load(weights_only=True)` and strict key matching, so a wrong key mapping fails loudly
+instead of leaving weights random. `EbJepaTwoRooms.untrained(folder)` builds the same
+architecture with fresh weights, as a control.
+
+eb_jepa is not a dependency of jepa-scope and is not on PyPI. To use the adapter, install both
+into one environment. The check below used Python 3.12 on macOS (Apple silicon) and these steps.
+
+```bash
+git clone https://github.com/facebookresearch/eb_jepa && cd eb_jepa && git checkout 966e61e
+uv venv --python 3.12 ../.venv
+uv pip install --python ../.venv/bin/python torch==2.6.0 torchvision==0.21.0 einops fire \
+  omegaconf pyyaml tqdm gymnasium scikit-learn pandas matplotlib seaborn opencv-python \
+  imageio wandb pytest av
+uv pip install --python ../.venv/bin/python -e . --no-deps
+uv pip install --python ../.venv/bin/python -e <path to jepa-scope> --no-deps
+```
+
+`--no-deps` skips `decord`, which eb_jepa declares but the Two Rooms example never imports, and
+which has no wheel for macOS on Apple silicon. On a Linux server, use `opencv-python-headless` in
+place of `opencv-python`.
 
 ## Checked against
 
