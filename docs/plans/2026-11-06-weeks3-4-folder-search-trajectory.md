@@ -1,7 +1,7 @@
 # jepa-scope Weeks 3 and 4: folder indexing, nearest-neighbour search and the latent trajectory view
 
 - **Date:** 2026-11-06
-- **Status:** Draft
+- **Status:** In progress (approved by the owner on 2026-11-06, every question as recommended)
 - **Planned by:** planner (Fable 5.1), briefed by the lead session (Opus 5.5); revised after one
   adversarial review and one outside review (see "Plan review")
 - **Spec / source:** `docs/roadmap.md`, "Next" item 1 and the project section's MVP schedule; the
@@ -384,7 +384,7 @@ flowchart LR
 
 ### T0 — Week 3. The retrieval experiment on cached vectors (exploratory; it chooses the default)
 
-- **Status:** Pending
+- **Status:** In progress
 - **Dependencies:** None
 - **Parallel group:** Sequential
 - **Complexity:** STRONG (the candidate set, the decision rule and the bars are fixed here; the
