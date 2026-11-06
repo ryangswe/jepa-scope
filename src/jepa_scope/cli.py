@@ -104,15 +104,36 @@ def _cache_path(video_sha256: str, args) -> Path:
     return CACHE_DIR / f"{video_sha256[:16]}-{digest}.latent"
 
 
-def _cache_is_valid(path: Path) -> bool:
+def _expected_representation(args) -> str:
+    """Hash of the representation these settings would produce, read without loading weights when
+    the weight files are already in the local snapshot, and by loading the model otherwise."""
+    from .model import UNKNOWN_WEIGHTS, Encoder
+
+    block = Encoder.describe(args.model, None, args.window, args.fps)
+    if block["weights"] == UNKNOWN_WEIGHTS:
+        encoder = Encoder.from_pretrained(args.model, device=args.device, dtype=args.dtype)
+        block = encoder.representation(args.window, args.fps)
+    return block["hash"]
+
+
+def _cache_is_valid(path: Path, expected_representation: str) -> bool:
+    """Whether a cache file can be reused: readable in the current format, made by this output
+    version, and holding the representation these settings would produce (same weights,
+    preprocessing, pooling and windowing). Otherwise it is re-embedded over the same path."""
     if not path.exists():
         return False
     try:
         header = latent_file.read_header(path)
     except (latent_file.LatentFileError, OSError, ValueError) as exc:
-        print(f"ignoring unreadable cache file {path}: {exc}", flush=True)
+        print(f"re-embedding: the cache file {path.name} cannot be used ({exc})", flush=True)
         return False
-    return header["run"].get("output_version") == OUTPUT_VERSION
+    if header["run"].get("output_version") != OUTPUT_VERSION:
+        print(f"re-embedding: the cache file {path.name} is from another output version", flush=True)
+        return False
+    if header["representation"]["hash"] != expected_representation:
+        print(f"re-embedding: the cache file {path.name} holds a different representation", flush=True)
+        return False
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -129,7 +150,8 @@ def main(argv: list[str] | None = None) -> int:
             p.error(f"{args.video} does not exist")
         video_sha256 = latent_file.file_sha256(args.video)
         out = _cache_path(video_sha256, args)
-        if args.refresh or not _cache_is_valid(out):
+        # The representation is described (a few seconds of imports) only when a file exists to check.
+        if args.refresh or not out.exists() or not _cache_is_valid(out, _expected_representation(args)):
             _embed(args.video, out, args)
         else:
             print(f"using cached {out}", flush=True)

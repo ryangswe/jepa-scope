@@ -136,6 +136,7 @@ class CachedEmbedder:
             no_patches=False,
         )
         self._encoder = None
+        self._expected = None
         self.embedded = 0
         self.log = log
 
@@ -158,7 +159,9 @@ class CachedEmbedder:
         from jepa_scope.embed import embed_video
 
         out = cli._cache_path(latent_file.file_sha256(path), self.args)
-        if not cli._cache_is_valid(out):
+        if self._expected is None:
+            self._expected = cli._expected_representation(self.args)
+        if not cli._cache_is_valid(out, self._expected):
             self.log(f"embedding {path.name}")
             tensors, header = embed_video(
                 path,

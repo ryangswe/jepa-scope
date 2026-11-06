@@ -58,3 +58,51 @@ The plan is `2026-11-06-weeks3-4-folder-search-trajectory.md`. Entries are newes
     explicit `--centre` option. The result is exploratory, as the plan says.
   - **Resolution:** owner approval of (a) requested.
   - **Permanent decision record needed:** Yes, at T10 (search as plain cosine over window means).
+
+- **2026-11-06 — Gate after T0: the owner approved (a) as the default.**
+  - **Evidence:** the owner answered "Approve (a)".
+  - **Impact:** T1 records `token_norm: none` and `pooling: mean_all`; `OUTPUT_VERSION` stays 2.
+  - **Resolution:** T1 starts.
+  - **Permanent decision record needed:** Yes, at T10, as already noted.
+
+- **2026-11-06 — T1 implemented: format version 2, `timeline_pooled`, the representation block,
+  `save` as a current-format writer.**
+  - **Evidence:** the fast suite passes (86). Breaking the code three ways made the tests fail:
+    taking `timeline_pooled` from the previous window (1 failure), dropping it (14), and restoring
+    `save`'s old merge order (1). On the real model, the version-1 cache file for
+    `val/archery/-Qz25rXdMjE…` printed the re-embed message, was re-embedded over the same path
+    (202 cache files before and after), and the second run reused it, so `Encoder.describe` (no
+    weights) agrees with what embedding writes. Its representation hash is `6cdbf94c50680ea2`
+    (model revision `b3c1679…`, `mean_all`). The server serves the version-2 file.
+  - **Impact:** every other version-1 cache file, including T0's, is now re-embedded on use.
+  - **Resolution:** the T0 cache files (3.8 GB) are deleted once this change is merged.
+  - **Permanent decision record needed:** Yes, at T10 (format version 2 and the descriptor).
+
+- **2026-11-06 — T1 deviation after review: weights are identified by content, not by commit.**
+  - **Evidence:** the fresh review found that for a model in a local folder the block held only
+    the path, so retraining into the same folder reused old vectors; and that the snapshot commit
+    changes when only a model card is edited upstream, which would force needless re-embedding.
+  - **Impact:** the block's `model_revision` field is replaced by `weights`, an identity built from
+    `config.json`'s bytes and each weight file's content name (the blob a Hugging Face snapshot
+    links to, or size and modification time for an ordinary folder). The commit moves to
+    `run.model_revision`, for information. A local model's `model_id` is its absolute path. The
+    hash's canonical form is now written down (sorted keys, no whitespace). `describe` is skipped
+    when no cache file exists, and the README states the reuse rule precisely. New fast tests use
+    a fake Hugging Face cache (same identity across commits with the same blob, a new one for new
+    weights) and a retrained local folder.
+  - **Resolution:** on the real model the earlier version-2 file was refused (its block no longer
+    matched), re-embedded over the same path, and reused on the next run; weights identity
+    `550d387c4f4a1862`, representation hash `e8eb61d31255e782`. The fast suite passes (88).
+  - **Permanent decision record needed:** Yes, at T10, with the format change.
+
+- **2026-11-06 — T1 second review: two identity gaps closed.**
+  - **Evidence:** a symlinked weight file in an ordinary folder was identified by its target's
+    file name, so retraining a "latest" checkpoint kept the identity; and right after an upstream
+    commit the new snapshot can hold only the config, so `describe` hashed the config alone.
+  - **Resolution:** a link's name is trusted only when it points at a Hugging Face blob (a `blobs`
+    folder and a 40- or 64-character hex name); anything else is described by the resolved path,
+    size and modification time. A folder with no weight file has weights `unknown`, and the CLI's
+    cache check then loads the model to get the identity. Two fast tests cover these cases (90
+    pass). On the real model the identity is unchanged (`550d387c4f4a1862`, hash
+    `e8eb61d31255e782`), so nothing re-embeds.
+  - **Permanent decision record needed:** No beyond the T10 entry.

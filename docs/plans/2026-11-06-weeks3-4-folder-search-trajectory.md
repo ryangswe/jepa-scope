@@ -502,7 +502,7 @@ flowchart LR
 
 ### T1 — Week 3. `.latent` format version 2 (`timeline_pooled`, the descriptor, `save`)
 
-- **Status:** Pending
+- **Status:** Complete (review findings addressed; see the log)
 - **Dependencies:** T0
 - **Parallel group:** Sequential
 - **Complexity:** ROUTINE
@@ -525,7 +525,9 @@ flowchart LR
     Face loaders, and record the resolved commit hash on the encoder from the local snapshot
     directory (`snapshot_download(model_id, revision=..., local_files_only=True)`), since the
     config object carries no commit hash in the installed transformers version. Add
-    `Encoder.representation()`, which builds the block `{model_id, model_revision, hidden_size,
+    `Encoder.representation()` (the log's T1 deviation replaces the commit with a content
+    identity of the weights, `weights`, and keeps the commit as `run.model_revision`), which builds
+    the block `{model_id, weights, hidden_size,
     preprocess_hash, token_layer: "encoder.last_hidden_state", token_norm: "none" |
     "layer_norm", pooling: "mean_all" | "mean_predicted_half", window: {frames, stride,
     context_frames, sample_fps}, output_version}` plus a `hash` over the canonical JSON of the
