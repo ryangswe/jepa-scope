@@ -19,6 +19,7 @@ Executing the plan (for example, one action and then planning again) is the call
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import torch
@@ -27,6 +28,8 @@ from torch import Tensor
 from jepa_scope.planning.protocol import Objective, WorldModel, plan_cost
 
 _NORM_EPS = 1e-6
+ACTION_DTYPE = torch.float32
+"""The dtype the planner samples and returns actions in, whatever the planning state's dtype."""
 
 
 @dataclass(frozen=True)
@@ -56,6 +59,14 @@ class CEMConfig:
     state of its rollout (eb_jepa's Two Rooms setting) or the ``"last"`` state only."""
 
     def __post_init__(self) -> None:
+        for name in ("plan_length", "n_iters", "num_samples", "num_elites"):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(f"{name} must be an integer, not {value!r}")
+        for name in ("var_scale", "max_norm"):
+            value = getattr(self, name)
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"{name} must be finite, not {value!r}")
         if self.plan_length < 1 or self.n_iters < 1:
             raise ValueError("plan_length and n_iters must be at least 1")
         if not 2 <= self.num_elites <= self.num_samples:
@@ -101,32 +112,51 @@ def cem_plan(
 ) -> CEMResult:
     """Plan an action sequence from ``z0`` towards ``z_goal`` with the Cross-Entropy Method.
 
-    ``z0`` and ``z_goal`` are single planning states, ``[1, *latent]``. Each sample is scored
-    with :func:`~jepa_scope.planning.protocol.plan_cost` using ``config.objective``.
-    ``steps_left``, when given, caps the horizon at the steps remaining in the episode. Pass a
-    ``generator`` on ``z0``'s device for a reproducible plan.
+    ``z0`` and ``z_goal`` are single planning states, ``[1, *state]``, on the same device. Each
+    sample is scored with :func:`~jepa_scope.planning.protocol.plan_cost` using
+    ``config.objective``. ``steps_left``, when given, caps the horizon at the steps remaining in
+    the episode. Pass a ``generator`` on ``z0``'s device for a reproducible plan.
+
+    Actions are continuous vectors, sampled and returned in ``ACTION_DTYPE`` on ``z0``'s device,
+    and limited only by ``config.max_norm``. The returned actions are exactly the ones the model
+    was asked to predict with, up to the elite averaging; converting them for an environment is
+    the caller's job. A rollout that scores a candidate as NaN or infinite raises ``ValueError``.
     """
     config = config or CEMConfig()
     if z0.shape[0] != 1 or z_goal.shape[0] != 1:
         raise ValueError("cem_plan plans for one start state: z0 and z_goal must have batch size 1")
+    if z0.shape != z_goal.shape or tuple(z0.shape[1:]) != tuple(model.state_shape):
+        raise ValueError(
+            f"z0 {tuple(z0.shape)} and z_goal {tuple(z_goal.shape)} must both be [1, *state_shape], "
+            f"with state_shape {tuple(model.state_shape)}"
+        )
+    if z0.device != z_goal.device:
+        raise ValueError(f"z0 is on {z0.device} but z_goal is on {z_goal.device}")
     if steps_left is not None and steps_left < 1:
         raise ValueError("steps_left must be at least 1")
     horizon = config.plan_length if steps_left is None else min(config.plan_length, steps_left)
 
     device = z0.device
-    mean = torch.zeros(horizon, model.action_dim, device=device)
-    std = torch.full((horizon, model.action_dim), config.var_scale, device=device)
+    mean = torch.zeros(horizon, model.action_dim, dtype=ACTION_DTYPE, device=device)
+    std = torch.full((horizon, model.action_dim), config.var_scale, dtype=ACTION_DTYPE, device=device)
     starts = z0.expand(config.num_samples, *z0.shape[1:])
     goals = z_goal.expand(config.num_samples, *z_goal.shape[1:])
 
     best_costs = []
     for _ in range(config.n_iters):
-        noise = torch.randn(config.num_samples, horizon, model.action_dim, generator=generator, device=device)
+        noise = torch.randn(
+            config.num_samples, horizon, model.action_dim, generator=generator, dtype=ACTION_DTYPE, device=device
+        )
         actions = mean + std * noise  # [num_samples, T, A]
         if config.max_norm is not None:
             actions = clip_action_norm(actions, config.max_norm)
 
         costs = plan_cost(model, starts, actions, goals, config.objective)
+        if costs.shape != (config.num_samples,):
+            raise ValueError(f"energy must return one cost per candidate, got shape {tuple(costs.shape)}")
+        if not torch.isfinite(costs).all():
+            bad = int((~torch.isfinite(costs)).sum())
+            raise ValueError(f"{bad} of {config.num_samples} candidate costs are NaN or infinite")
         best_costs.append(costs.min().item())
 
         elites = actions[torch.topk(costs, config.num_elites, largest=False).indices]

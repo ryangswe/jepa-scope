@@ -86,7 +86,7 @@ class EbJepaTwoRooms:
     Build it with :meth:`from_run` for trained weights or :meth:`untrained` for a control.
     """
 
-    latent_shape = (LATENT_DIM,)
+    state_shape = (LATENT_DIM,)
     action_dim = ACTION_DIM
 
     def __init__(self, modules: nn.Module, device: str | torch.device = "cpu"):
