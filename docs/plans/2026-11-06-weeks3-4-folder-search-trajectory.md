@@ -384,7 +384,7 @@ flowchart LR
 
 ### T0 — Week 3. The retrieval experiment on cached vectors (exploratory; it chooses the default)
 
-- **Status:** In progress
+- **Status:** Complete (default (a) chosen; awaiting the owner at the gate)
 - **Dependencies:** None
 - **Parallel group:** Sequential
 - **Complexity:** STRONG (the candidate set, the decision rule and the bars are fixed here; the
