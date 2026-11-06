@@ -1,7 +1,7 @@
 # Week 1 closeout: run eb_jepa Two Rooms and draft the planning protocol
 
 - **Date:** 2026-11-05
-- **Status:** Draft
+- **Status:** In progress
 - **Planned by:** planner (Fable 5.1), briefed by the lead session
 - **Spec / source:** `docs/roadmap.md`, Week 1 table, last open step; layer E of "The missing toolchain"; the 2026-11-03 product decision that tools target a protocol rather than one model
 - **Branch:** `week1-two-rooms-protocol`
@@ -67,7 +67,7 @@ flowchart LR
 
 ### T1 — Set up the lab, measure the laptop, and pick the RunPod GPU
 
-- **Status:** Pending
+- **Status:** Done
 - **Dependencies:** None
 - **Parallel group:** Sequential
 - **Complexity:** ROUTINE
@@ -87,7 +87,7 @@ flowchart LR
 
 ### T2 — Train the random-wall model on a RunPod pod and reproduce eb_jepa's planning success rate
 
-- **Status:** Pending
+- **Status:** In progress
 - **Dependencies:** T1
 - **Parallel group:** A
 - **Complexity:** ROUTINE
@@ -119,7 +119,7 @@ flowchart LR
 
 ### T3 — Draft the protocol: spec, typed module, reference CEM and a CI test on a toy world model
 
-- **Status:** Pending
+- **Status:** Done
 - **Dependencies:** T1 (so the draft is written knowing the run exists and the adapter target is fixed)
 - **Parallel group:** A
 - **Complexity:** STRONG

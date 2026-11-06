@@ -20,3 +20,7 @@ src/jepa_scope/static/
 # Claude Code: per-machine settings and agent worktrees
 .claude/settings.local.json
 .claude/worktrees/
+
+# eb_jepa checkpoints and planning videos stay in the lab directory, never in the repository.
+*.pth.tar
+*.gif
