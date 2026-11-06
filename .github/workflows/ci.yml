@@ -84,4 +84,4 @@ jobs:
 
       - name: Lint viewer
         working-directory: web
-        run: npx oxlint src
+        run: npx oxlint --type-aware src

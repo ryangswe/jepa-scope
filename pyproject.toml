@@ -38,7 +38,9 @@ dev = [
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
+select = ["E", "F", "I", "B", "UP", "PLE", "ASYNC", "RUF006"]
+# ASYNC rules that give advice rather than find bugs.
+ignore = ["ASYNC109", "ASYNC110", "ASYNC115", "ASYNC116"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
