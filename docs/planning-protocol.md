@@ -95,12 +95,19 @@ often as the model's own planner does on the same episodes.
 
 ## Checked against
 
-Pending. This section will give the reproduction steps for the eb_jepa Two Rooms model, its
-measured planning success rate natively and through the protocol, and their sampling error. With
-20 episodes, one success rate has a standard error of up to about 11 points (about 7 points at a
-rate near 90%). eb_jepa counts an episode as a success by the agent's distance to the goal after
-the last allowed step, not when it first reaches the goal, and the numbers here use the same
-rule.
+**eb_jepa Two Rooms, native planner.** The reference model was trained with eb_jepa's own
+`examples/ac_video_jepa` script at commit `966e61e` (random wall positions, seed 1, 12 epochs, on
+one NVIDIA L40S in about 1.6 hours). eb_jepa's own CEM evaluation (`planning_cem.yaml`, 20
+episodes of up to 200 steps) then succeeded in 18 of 20 episodes (90%). With 20 episodes, a
+success rate near 90% has a standard error of about 7 points. eb_jepa's README reports 96 ± 2%
+for CEM, where each figure averages three training seeds and the last three checkpoints and
+± 2 is their spread. One run and one checkpoint is noisier than that, so 90% is consistent with
+it.
+
+eb_jepa counts an episode as a success by the agent's distance to the goal after the last allowed
+step, not when it first reaches the goal, and the numbers here use the same rule.
+
+**Through the protocol.** Pending; the adapter and its parity and planning checks come next.
 
 ## Open points
 

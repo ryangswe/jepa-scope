@@ -76,3 +76,16 @@ Plan: `2026-11-05-week1-two-rooms-protocol.md`. Entries are appended as work pro
   - **Impact:** T4 can build on the module.
   - **Resolution:** T3 complete.
   - **Permanent decision record needed:** Yes (the protocol's three operations and the summed cost; written in T5).
+
+- **2026-11-06 — T2: eb_jepa's CEM reproduced at 18 of 20 (90%); pod 1 deleted.**
+  - **Evidence:**
+    - The 20-episode CEM evaluation (`planning_cem.yaml`, `latest.pth.tar` = epoch 11, step 3119) gave `success_rate` 0.90 and `mean_state_dist` 2.57, with an average episode time of 45 s on the L40S. It took 921 s in all.
+    - Episodes 2 and 3 failed and the other 18 succeeded (from the `agent_steps_succ` and `agent_steps_fail` files in each `ep_N` folder).
+    - The validation unroll MSE rises from 0.0044 one step ahead to about 0.066 at step 17 (`unroll_eval/step-3119_eval_only/eval.csv`).
+    - MPPI was not run; it is optional in this plan and T4 compares CEM only.
+    - The run folder (429 MB, 168 files) was copied to `~/Workspace/eb_jepa-lab/checkpoints/pod1/dev_2026-11-06_02-52/impala_cov8_std16_simt12_idm1_seed1`. The SHA-256 of `latest.pth.tar` (`9dc74658…`) and `e-11.pth.tar` match the pod's, and the file counts match.
+    - `runpodctl pod delete 511sta3g8l3yvk` returned `"deleted": true`, and `runpodctl pod list` is empty. Both watchdogs are gone (the on-pod one with the pod; the laptop backstop was killed).
+  - **Billing:** the pod ran 7,490 s (about 2.08 h) at $0.79/h, about $1.64, plus a negligible amount of volume storage. The running total is about $1.65 of the $25 cap.
+  - **Impact:** the pass bar (at least 80%) is met. T4 uses this checkpoint. eb_jepa's README gives 96 ± 2% for CEM on random walls (its ablation table), where ± 2 is the spread of averages over 3 seeds and 3 checkpoints. 90% is 6 points below that, which is within the sampling error of one 20-episode evaluation (about 7 points), so it is not evidence of a broken setup.
+  - **Resolution:** T2 complete.
+  - **Permanent decision record needed:** No.

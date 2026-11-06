@@ -87,7 +87,7 @@ flowchart LR
 
 ### T2 — Train the random-wall model on a RunPod pod and reproduce eb_jepa's planning success rate
 
-- **Status:** In progress
+- **Status:** Done
 - **Dependencies:** T1
 - **Parallel group:** A
 - **Complexity:** ROUTINE
