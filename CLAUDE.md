@@ -81,7 +81,10 @@ and report formats live there.
 - Merging into the default branch.
 - Publishing a release: tags, GitHub releases, PyPI uploads.
 - Changing repository settings or visibility, or posting about the project anywhere public.
-- Paid compute, such as renting a GPU for embedding runs or `eb_jepa` training.
+- Paid compute outside the spending cap of a plan the owner approved. Within that cap, cloud
+  GPUs (RunPod or similar) need no further approval, provided each pod's GPU type and hourly
+  price from a live read go in the plan's log before it is created, a watchdog stops it if the
+  session is lost, and it is deleted when the job ends.
 
 ### Model routing
 
