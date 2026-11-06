@@ -106,3 +106,24 @@ The plan is `2026-11-06-weeks3-4-folder-search-trajectory.md`. Entries are newes
     pass). On the real model the identity is unchanged (`550d387c4f4a1862`, hash
     `e8eb61d31255e782`), so nothing re-embeds.
   - **Permanent decision record needed:** No beyond the T10 entry.
+
+- **2026-11-06 — PR 1 merged (T0 and T1, ryangswe/jepa-scope#5); old cache deleted; T2 starts.**
+  - **Evidence:** the owner merged #5 (merge commit `ec26b1a`). 201 version-1 cache files (4.03 GB),
+    T0's set plus one earlier clip's, were deleted; the one version-2 file was kept.
+  - **Impact:** T2–T5 go on branch `week3-index` from `main`.
+  - **Resolution:** T2 delegated to an executor, as the plan routes it.
+  - **Permanent decision record needed:** No.
+
+- **2026-11-06 — T2 complete: the index file contract (`index_file.py`).**
+  - **Evidence:** an executor (Sonnet) wrote the module and its tests; a fresh reviewer (Opus) did
+    two rounds. Round 1 found eight gaps that would have been hard to tighten once users have
+    index files: a relative `root`; non-finite or out-of-range clip numbers and bare `NaN` in the
+    JSON (which would break `/api/meta` for a whole folder); negative clip ids; path holes and
+    duplicates; loosely shaped `skipped` and `sha256`; an unchecked `mean`; and a fixed temporary
+    name. Round 2 found that its own suggested ":" rule rejected legitimate timestamped names, plus
+    a fixed file mode and a temporary file placed beside a symlink's target. All are fixed; the
+    path rule is now public as `is_valid_clip_path`, and T4 skips failing files instead of
+    crashing. The fast suite passes (235). Every check was break-tested by removing it.
+  - **Impact:** T3 builds on `Index`, `clip_rows` and `clip_vector`.
+  - **Resolution:** committed on `week3-index`.
+  - **Permanent decision record needed:** Yes, at T10 (the index file as a versioned contract).
