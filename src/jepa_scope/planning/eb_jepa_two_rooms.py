@@ -133,8 +133,9 @@ class EbJepaTwoRooms:
     @torch.no_grad()
     def predict(self, z: Tensor, a: Tensor) -> Tensor:
         """One GRU step: ``z`` ``[B, 512]`` and action ``a`` ``[B, 2]`` to the next latent ``[B, 512]``."""
-        batch = z.shape[0]
-        return self.modules.predictor(z.view(batch, LATENT_DIM, 1, 1, 1), a.unsqueeze(-1)).flatten(1)
+        z = z.to(self.device, torch.float32)
+        a = a.to(self.device, torch.float32)
+        return self.modules.predictor(z.reshape(z.shape[0], LATENT_DIM, 1, 1, 1), a.unsqueeze(-1)).flatten(1)
 
     def energy(self, z: Tensor, z_goal: Tensor) -> Tensor:
         """Mean squared difference over the latent dimensions, ``[B]``."""

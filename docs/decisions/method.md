@@ -14,17 +14,23 @@ rather than V-JEPA 2. Week 1 drafted that protocol and checked it against `eb_je
 model. latent-plan will build on it, with V-JEPA 2-AC as its second model, so its shape is costly
 to change later.
 
-**Decision.** A world model has `latent_shape`, `action_dim`, `encode(obs)`, `predict(z, a)` and
+**Decision.** A world model has `state_shape`, `action_dim`, `encode(obs)`, `predict(z, a)` and
 `energy(z, z_goal)`. `z` is a planning state: one fixed-shape tensor holding everything the next
 prediction needs, which may be more than the latent `energy` compares (for V-JEPA 2-AC, its token
 context and the arm's pose). `predict` takes one step and keeps no state. `encode` accepts the
 model's own observation type. `plan_cost` sums the energy over all `T + 1` rollout states by
-default, with `"last"` as a planner setting. The owner approved the signatures, and later the
-Fable architect's changes (planning state, `encode(obs: Any)`, the objective setting).
+default, with `"last"` as a planner setting; `plan_cost` adds the energies step by step and keeps
+only the current state. Adapters treat inputs as read-only, keep batch rows independent, refuse
+to overflow a packed state's declared capacity, and promise inference only. The owner approved
+the signatures, then a Fable architect's changes (planning state, `encode(obs: Any)`, the
+objective setting), then an outside review's (renaming `latent_shape` to `state_shape`, the
+adapter rules, streaming cost, input validation). The interface stays experimental until a
+second adapter reproduces its own model's native rollouts.
 
-**Evidence.** Through an adapter, rollouts and costs match `eb_jepa`'s own exactly, and the
-reference CEM succeeded in 16 of 20 episodes against 18 of 20 for `eb_jepa`'s planner on the
-same episodes (details in `docs/planning-protocol.md`). vjepa2's planner (`notebooks/utils/
+**Evidence.** Through an adapter, rollouts and costs match `eb_jepa`'s own, and the reference CEM
+returns `eb_jepa`'s plans given the same noise. In a closed-loop engineering check it solved 16
+of 20 episodes against 18 of 20 natively, which does not establish equivalence (details in
+`docs/planning-protocol.md`). vjepa2's planner (`notebooks/utils/
 mpc_utils.py`) starts from one image and grows its context from its own predictions, so its
 state is Markov and fits a stateless `predict`.
 
@@ -36,7 +42,7 @@ state is Markov and fits a stateless `predict`.
   adapter needs them.
 - *A summed objective hard-coded into `plan_cost`.* V-JEPA 2-AC's planner scores only the final
   frame, and a parity check against it needs the same objective.
-- *Deferred, not rejected:* `latent(z) -> [B, *latent]` for drawing latents along a plan, to be
+- *Deferred, not rejected:* an optional `latent(z) -> [B, *latent]` for drawing latents along a plan, to be
   decided when latent-plan is planned.
 
 ---

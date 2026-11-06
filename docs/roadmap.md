@@ -163,7 +163,7 @@ of GPU time for `eb_jepa` runs.
 | Surprise from masked prediction | Done. A cut in a spliced clip is detected; see below |
 | `.latent` format and CLI | Done |
 | Web viewer with overlay and timeline | Done |
-| Run the `eb_jepa` Two Rooms example and draft the planning protocol | Done. `eb_jepa`'s own planner reaches the goal in 18 of 20 episodes, the protocol's in 16 of the same 20; see `docs/planning-protocol.md` |
+| Run the `eb_jepa` Two Rooms example and draft the planning protocol | Done. Rollouts and same-noise plans match `eb_jepa`'s; in a closed-loop check `eb_jepa`'s planner solved 18 of 20 episodes and the protocol's 16; see `docs/planning-protocol.md` |
 | Publish under Apache-2.0 | Done: `ryangswe/jepa-scope`, with CI |
 
 The first local milestone was "open a clip on a MacBook without CUDA and see a PCA overlay and a
@@ -182,9 +182,11 @@ within each scene and rose to between 0.65 and 0.67 for the second after the cut
 - **Expect a floor.** Surprise never reaches zero, and what carries information is the change
   relative to the clip's own floor.
 - **A wrapper that runs is not a wrapper that is right.** The `eb_jepa` adapter was trusted only
-  after its rollouts matched `eb_jepa`'s own to the last digit and its planner was run on the
-  exact episodes `eb_jepa` had evaluated. Pairing the episodes is what made 16 against 18
-  readable: the two planners disagreed on only two episodes.
+  after its rollouts matched `eb_jepa`'s own to the last digit and, given the same random noise,
+  its planner returned `eb_jepa`'s plans. Closed-loop success on 20 episodes (16 against 18) was a
+  useful smoke test but could not show the two planners equal; an outside review pointed out that
+  the "paired" pass rule reduced to a net count. Controlled comparisons answer "is it the same
+  computation?"; small success-rate runs do not.
 
 ### Next
 

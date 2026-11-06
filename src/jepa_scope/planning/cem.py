@@ -118,8 +118,8 @@ def cem_plan(
     the episode. Pass a ``generator`` on ``z0``'s device for a reproducible plan.
 
     Actions are continuous vectors, sampled and returned in ``ACTION_DTYPE`` on ``z0``'s device,
-    and limited only by ``config.max_norm``. The returned actions are exactly the ones the model
-    was asked to predict with, up to the elite averaging; converting them for an environment is
+    and limited only by ``config.max_norm``. The returned plan is the elite mean, which stays
+    within the norm bound because the bound is convex; converting it into environment actions is
     the caller's job. A rollout that scores a candidate as NaN or infinite raises ``ValueError``.
     """
     config = config or CEMConfig()
