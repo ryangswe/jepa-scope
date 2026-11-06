@@ -32,14 +32,27 @@ how embeddings are computed. Everything runs on the laptop; no task needs a GPU.
 ## Approach
 
 **The `.latent` file gains one tensor (T1).** `timeline_pooled`, `float32[G, D]`, is the mean over
-the H×W patch features of each timeline tubelet (the `tl_feats` array `embed.py` already builds and
-then discards after PCA). It costs 4 KB per tubelet at ViT-L (about 160 KB for a 10-second clip)
-and is what the trajectory view plots. Because the folder indexer embeds without patches by default
-(below), it is the only per-tubelet vector a folder clip keeps, so it has to be in the file.
-`FORMAT_VERSION` goes to 2 and `load` keeps refusing other versions with its existing message;
-`OUTPUT_VERSION` goes to 3 so cached version-1 files are re-embedded rather than reported as
-unreadable. No embedding, energy or PCA computation changes. Doing this first means every clip
-indexed in Week 3 already carries the tensor Week 4 needs.
+the H×W patch features of each timeline tubelet, computed from the float32 encoder tokens before
+the float16 cast that `patches` gets. It costs 4 KB per tubelet at ViT-L (about 160 KB for a
+10-second clip) and is what the trajectory view plots. Because the folder indexer embeds without
+patches by default (below), it is the only per-tubelet vector a folder clip keeps, so it has to be
+in the file. `FORMAT_VERSION` goes to 2, and `load` and `read_header` keep refusing other versions
+with their existing message. `OUTPUT_VERSION` does not change: no existing tensor changes, and the
+cache file name already includes `OUTPUT_VERSION`, so a bump would leave the old file orphaned in
+`~/.cache/jepa-scope` instead of replacing it. Without the bump, the cache check reads the old
+file's header, gets the format-version error, prints that it is re-embedding, and writes the new
+file over the same path. No embedding, energy or PCA computation changes. Doing this first means
+every clip indexed in Week 3 already carries the tensor Week 4 needs.
+
+**How windows and the timeline relate.** Each 16-frame window has a context half (its first eight
+frames, four tubelets) and a predicted half. Windows overlap by half, so the timeline takes window
+0 whole and, from every later window `w`, only its predicted half (`timeline_owner` in
+`embed.py`); window `w`'s context half appears on the timeline as window `w - 1`'s predicted half,
+encoded in a different window. Two consequences shape this plan. The mean of the timeline
+tubelets a window owns is not that window's `pooled` vector, so the trajectory view does not claim
+that a window's point is the centroid of its tubelets' points. And the window that owns the
+tubelet at time `t` is the earlier of the two windows that contain `t`, so a search from time `t`
+uses the window whose centre is nearest `t` instead.
 
 **The index is one self-contained safetensors file (T2),** `jepa-scope.index` in the indexed folder
 by default, with the same shape of contract as `.latent`: a validated JSON header under the
@@ -47,11 +60,14 @@ metadata key `jepa_scope` and a few tensors.
 
 - Header: `format: "jepa-scope.index"`, `format_version: 1` (`INDEX_FORMAT_VERSION` in a new
   `src/jepa_scope/index_file.py`), `model_id`, `hidden_size`,
-  `embedding: {"kind": "window_mean", "normalise": "centred-cosine"}`, the `window` block and
-  `preprocess` hash copied from the clips' headers, `output_version`, `root` (the absolute folder
-  path when built), and `clips`, a list of `{path (relative to root, forward slashes), sha256,
-  size, mtime, duration, width, height, latent (absolute path of the clip's .latent file), rows:
-  [start, stop)}`.
+  `embedding: {"kind": "window_mean", "normalise": "centred-cosine" | "cosine"}`, the `window`
+  block and `preprocess` hash copied from the clips' headers, `output_version`, `root` (the folder
+  path when built, for information only: the index's own directory is authoritative), `skipped`
+  (files that could not be embedded, with the reason), and `clips`, a list of `{path (relative to
+  the index's directory, forward slashes), sha256, size, mtime, duration, width, height,
+  cache_key (the settings digest of the clip's cached `.latent`; the path is rebuilt through
+  `cache.py` from the sha256 and this key), rows: [start, stop)}`. The index holds no absolute
+  paths into the cache, so it survives a moved folder or another machine's cache layout.
 - Tensors: `pooled float32[N, D]` (every clip's window vectors stacked in clip order),
   `window_start_time float64[N]`, `clip int32[N]`, and `mean float32[D]` (the mean of `pooled`,
   used for centring).
@@ -66,16 +82,22 @@ files; viewing a hit does.
 index `mean` and L2-normalised once at load; a query is one matrix–vector product and an
 `argpartition`. Two query types share that primitive.
 
-- "Moments like this moment": the query is one window (the window owning the current tubelet, from
-  `timeline_window`). The results are windows across the folder, with the query window and any
-  window of the same clip overlapping it excluded. Within one clip, a hit that overlaps a
-  higher-ranked hit is dropped, so a list of ten hits is ten distinct moments.
+- "Moments like this moment": the query is one window, the one whose centre is nearest the current
+  time. The results are windows across the folder, with the query window and any window of the
+  same clip overlapping it excluded. Within one clip, a hit that overlaps a higher-ranked hit is
+  dropped, so a list of ten hits is ten distinct moments. Because exclusion and suppression remove
+  candidates, the search widens its candidate set (2k, 4k, and so on, then a full sort) until it
+  has k hits or runs out, so lists are never short for that reason.
 - "Clips like this clip": a clip's vector is the mean of its window vectors (centred and normalised
   after averaging); results are the other clips.
 
 Centring is there because mean-pooled transformer features share a large common direction that
 compresses raw cosine into a narrow band; T5 measures raw against centred on natural video and
-records both. A query over 30,000 windows (about 3,000 ten-second clips) is a 120 MB matrix and
+records both. Centring on the folder's own mean breaks down for small folders: the centred clip
+vectors sum to zero, so with two clips every score is −1, and with one clip the mean is the clip's
+own. So the index centres only when it holds at least 10 clips, uses plain cosine below that and
+in single mode, records which in `embedding.normalise`, and the viewer labels scores as relative
+to this folder. A query over 30,000 windows (about 3,000 ten-second clips) is a 120 MB matrix and
 about 30 ms. Brute force stops being comfortable around half a million windows (a few hundred hours
 of video, 2 GB resident, about half a second per query). At that point an approximate-nearest-
 neighbour library replaces the body of `search.py` behind the same function signatures, and the
@@ -87,21 +109,27 @@ names. For each video it finds or makes its `.latent` through the existing cache
 with-patches cache file if one exists, otherwise a without-patches one, otherwise it embeds with
 `keep_patches=False` (saving 4 MB per window; `--patches` keeps them).
 
-- Refresh is incremental. A file whose size and mtime match its index entry is kept without
-  re-hashing; otherwise it is hashed, and a changed hash means re-embedding. Files that disappeared
-  are dropped.
+- Refresh is incremental. A file whose size and mtime match its index entry, and whose cached
+  `.latent` still exists and passes the cache check, is kept without re-hashing. Otherwise it is
+  hashed: a changed hash, or a missing or invalid cache file, means re-embedding. Files that
+  disappeared are dropped. A refresh cannot detect a file replaced with one of the same size and
+  mtime; the server's hash check (below) does.
 - An index whose `model_id`, window settings, preprocess hash or `output_version` differ from the
   current run is rebuilt from scratch with a printed reason.
+- One bad file does not stop the run. A clip shorter than one window, a source below the sampling
+  rate, a file with no video stream or a model output with NaN values is reported, skipped, and
+  listed under `skipped` in the index header.
 - Progress prints per clip. An interrupted run loses only the index file, because every embedded
   clip is already in the cache, so rerunning resumes.
 - Embedding dominates the cost: about 0.35 s per second of video on an M3 Max, so an hour of video
   takes about 20 minutes.
 
-The CLI gains `jepa-scope index <folder> [--out PATH] [--recursive] [--patches] <embed args>` and
+T4's CLI gains `jepa-scope index <folder> [--out PATH] [--recursive] [--patches] <embed args>` and
 `jepa-scope search <folder|index> <clip-in-index | query.mp4> [--at SECONDS] [-k 10]
-[--by moment|clip]` (a query video not in the index is embedded through the cache). The default
-command accepts a folder (`jepa-scope <folder>` indexes, refreshing, then serves), and
-`jepa-scope view` accepts a folder, an index file or a `.latent`.
+[--by moment|clip]` (a query video not in the index is embedded through the cache). T6, which
+makes the server able to serve a folder, also makes the default command accept a folder
+(`jepa-scope <folder>` indexes, refreshing, then serves) and `jepa-scope view` accept a folder, an
+index file or a `.latent`, so no merged pull request offers a command that cannot run.
 
 **The server serves many clips (T6).** `create_app` takes an index path, a folder, or a single
 `.latent`, which it wraps as a one-clip in-memory index so the viewer sees one shape in both modes.
@@ -112,20 +140,25 @@ Clip tensors load lazily on first request through an LRU of eight. Endpoints:
 - `GET /api/clips/{id}/meta` returns today's per-clip `{header, timeline}` plus
   `timeline.window: int[]` and `windows.start_time: number[]`.
 - `GET /api/clips/{id}/pca` and `/surprise` return bytes in the unchanged layout.
-- `GET /api/clips/{id}/video` keeps the existing SHA-256 refusal, with the index's size-and-mtime
-  shortcut so a 2 GB file is not re-hashed on every open. A mismatch returns 409 with "run
-  `jepa-scope index` again".
+- `GET /api/clips/{id}/video` keeps the existing SHA-256 refusal. The server hashes each clip's
+  video once, on its first open in that server process, and remembers the result, so a 2 GB file
+  is hashed once per session rather than on every range request. Only a hash mismatch refuses: it
+  returns 409 with "run `jepa-scope index` again". A file whose mtime changed but whose bytes did
+  not is served normally.
 - `GET /api/search?clip=&window=&k=` and `GET /api/search?clip=&k=&by=clip` return
   `{hits: [{clip, window, start_time, score}]}`.
 - Week 4 adds `GET /api/clips/{id}/trajectory?fit=folder|clip`, returning `float32[G, 3]` bytes,
   and `GET /api/cloud`, returning `float32[N, 3]` bytes subsampled to at most 50,000 points, with
   the chosen rows listed in `/api/meta`.
 
-The folder fit is a 3-component PCA (`pca.fit`, which pins signs) on the index's centred `pooled`.
+The folder fit is a 3-component PCA (`pca.fit`, which pins signs) on the index's `pooled`.
 `timeline_pooled` is projected with the same mean and components, so every clip and the cloud share
-axes and a window's cloud point is exactly the centroid of its tubelets' path points. `fit=clip`
-fits on the clip's own `timeline_pooled`; it is the only option in single mode. The viewer's
-`web/src/types.ts` changes with every one of these.
+one set of axes. A window's cloud point is not the centroid of its tubelets' path points (see "How
+windows and the timeline relate"); the view shows them as two related but distinct things. A
+folder fit is dominated by differences between clips and may flatten motion within one clip, so
+`fit=clip`, a fit on the clip's own `timeline_pooled`, is one click away, and it is the only option
+in single mode. The viewer's `web/src/types.ts` changes with every one of these, in the same task
+as the viewer code that uses them (T7, T9), so the viewer builds at every commit.
 
 **The viewer (T7, T9).** `App` loads `/api/meta`, picks the clip from the URL hash (`#clip=3`) or
 the first, then loads that clip's meta, bytes and video. Switching clips swaps the video source and
@@ -164,8 +197,12 @@ stays green), and one new npm dependency (`three`).
   with native wheels for a scale no user has; the plan states where brute force breaks.
 - **Index only under `~/.cache/jepa-scope`** — rejected as the default. It is invisible, not
   portable with the folder, and the owner cannot tell what was indexed. `--out` covers read-only
-  folders. The index is self-contained for search, so moving the folder keeps search working;
-  viewing then re-embeds what the cache lacks.
+  folders. The index is self-contained for search, so moving the folder keeps search working.
+  Viewing a clip whose cache file is missing needs `jepa-scope index` (or `jepa-scope <folder>`)
+  again, which re-embeds only those clips; the server never embeds.
+- **A hidden index file (`.jepa-scope.index`)** — not the default, because a user should be able to
+  see what the tool wrote into their folder; the indexer's rule of skipping dot-prefixed names
+  would make it work. Question 3 offers it to the owner.
 - **SQLite for the index** — rejected. Embeddings would be blobs, and the safetensors-plus-header
   contract already exists and is readable by any safetensors tool, which the roadmap's layer B
   wants.
@@ -181,24 +218,39 @@ stays green), and one new npm dependency (`three`).
   orbit controls, picking and lines would be a few hundred new lines to maintain for no gain over
   Three.js.
 
-Decision records to write in T10: the index file as a versioned contract beside the videos; search
-as brute-force centred cosine over window means; `.latent` format version 2 with `timeline_pooled`
-(version 1 files are re-embedded, not migrated); and Three.js in the viewer.
+- **Bumping `OUTPUT_VERSION` with the format change** — rejected. No existing tensor changes, and
+  because the cache file name includes `OUTPUT_VERSION`, a bump would orphan old cache files
+  instead of replacing them.
+- **Migrating version-1 files by computing `timeline_pooled` from their `patches`** — not worth it
+  today: one cache file exists, and re-embedding it takes seconds. Revisit if format changes become
+  frequent.
+
+Decision records to write in T10: the index file as a versioned contract beside the videos, with
+no absolute cache paths; search as brute-force cosine over window means, centred on the folder
+mean from 10 clips up; `.latent` format version 2 with `timeline_pooled` (version 1 files are
+re-embedded, not migrated, and `OUTPUT_VERSION` is unchanged); and Three.js in the viewer.
 
 ## Risks and open questions
 
 The questions for the owner are collected at the end of this plan with recommendations; the risks
 here stay with the implementer.
 
-- **The fast near-duplicate test may be flaky on a random encoder** — the tiny random V-JEPA 2 is
-  deterministic, so a byte-identical copy embeds identically (score 1.0, rank 1), and a
-  constant-grey clip must rank last; those are the planted checks. A noisy near-duplicate is not
-  used, because a one-layer random encoder gives no guarantee on it.
-- **Mean-pooled features may group classes weakly** — T5's bar is set here, before measuring. It is
+- **Planted checks that cannot fail** — two traps found in review. With centring, a vector scaled
+  by 2 does not score 1.0 against the original, so normalisation is tested on the plain-cosine
+  path. And with three clips of which two are identical, the centred clip vectors force the third
+  to score exactly −1, so "the grey clip ranks last" would pass whatever the encoder did. The T4
+  fixture therefore has four clips, one of them a plausible alternative, and each test states
+  which normalisation it uses. The tiny random V-JEPA 2 is deterministic, so a byte-identical copy
+  embeds identically; a noisy near-duplicate is not used, because a one-layer random encoder gives
+  no guarantee on it.
+- **Search may group scenes rather than actions** — Kinetics-mini's five classes differ by static
+  scene (an archery range, a bowling lane, sky, a track, a street), so a model that sees nothing
+  in motion could still pass a class-retrieval bar. T5 therefore measures a model-free colour
+  baseline and a single-frame V-JEPA control beside the real result, with bars set here. A bar is
   either met or escalated with the numbers; it is never lowered in the same session.
-- **The size-and-mtime shortcut can keep a stale entry** when a file is replaced with the same size
-  and mtime. The viewer's SHA-256 check on open catches it and names the fix. Documented, not
-  solved.
+- **The index refresh can keep a stale entry** when a file is replaced with one of the same size
+  and mtime. The server hashes each video on its first open and refuses a mismatch, naming the
+  fix, so stale data is never shown. Documented, not otherwise solved.
 - **Browser memory for the cloud** — capped at 50,000 points by subsampling in the server.
 - **Three.js adds about 0.5 MB to the wheel** (tree-shaken ESM). Acceptable; the build check is
   unchanged.
@@ -230,7 +282,7 @@ flowchart LR
 
 ## Task graph
 
-### T1 — Week 3. Add `timeline_pooled` to the `.latent` file; FORMAT_VERSION 2, OUTPUT_VERSION 3 (the first small change)
+### T1 — Week 3. Add `timeline_pooled` to the `.latent` file; FORMAT_VERSION 2 (the first small change)
 
 - **Status:** Pending
 - **Dependencies:** None
@@ -238,25 +290,31 @@ flowchart LR
 - **Complexity:** ROUTINE
 - **Execution:** Lead session
 - **Owner time:** 0.5 h (approve the architecture and this change; review the diff)
-- **Expected files/workspaces:** `src/jepa_scope/__init__.py`, `src/jepa_scope/latent_file.py`,
-  `src/jepa_scope/embed.py`, `tests/test_pipeline.py`, `README.md` (one sentence under the cache
-  paragraph)
-- **Objective:** In `embed_video`, after `tl_feats` is built, add
-  `tensors["timeline_pooled"] = tl_feats.reshape(len(tl_feats), -1, tl_feats.shape[-1]).mean(axis=1).astype(np.float32)`
-  (shape `[G, D]`). Add `"timeline_pooled"` to `TIMELINE_KEYS` and its expected shape
-  `(count, hidden_size)` to `check_tensors`. Set `FORMAT_VERSION = 2` and `OUTPUT_VERSION = 3`,
-  with a comment on each naming this change. Extend `test_embed_shapes` (shape `(12, 96)` and
-  `np.allclose(timeline_pooled[g], patches[w, j].reshape(-1, 96).mean(0))` for every tubelet, using
-  `timeline_owner`), add a `timeline_pooled` row-count case to
-  `test_load_rejects_other_inconsistencies`, and add a test that a header with `format_version: 1`
-  is refused.
+- **Expected files/workspaces:** `src/jepa_scope/latent_file.py`, `src/jepa_scope/embed.py`,
+  `src/jepa_scope/cli.py` (the cache message), `tests/test_pipeline.py`, `README.md` (one
+  sentence under the cache paragraph)
+- **Objective:** In `embed_video`, keep each batch's float32 per-tubelet patch means (the tokens
+  reshaped to the grid and averaged over H×W, before the float16 cast) beside `patches`, and build
+  `tensors["timeline_pooled"]`, `float32[G, D]`, from them with the same `timeline_owner` mapping
+  as `tl_feats`. Add `"timeline_pooled"` to `TIMELINE_KEYS` and its expected shape
+  `(count, hidden_size)` to `check_tensors`. Set `FORMAT_VERSION = 2` with a comment naming this
+  change; leave `OUTPUT_VERSION` alone (see Approach). Make `_cache_is_valid`'s message say that an
+  older format is being re-embedded. Tests:
+  - extend `test_embed_shapes`: shape `(12, 96)`, dtype float32, and for every tubelet `g`,
+    `timeline_pooled[g]` within float16 rounding of `patches[w, j].reshape(-1, 96).mean(0)` with
+    `(w, j) = timeline_owner(g, half)`;
+  - add a `timeline_pooled` row-count case to `test_load_rejects_other_inconsistencies`;
+  - add a test that a file whose header says `format_version: 1` is refused by `read_header` and
+    `load`. It writes the safetensors metadata directly, because `latent_file.save` overwrites
+    `format_version`;
+  - add a test that `_cache_is_valid` returns False for that file and prints the message.
 - **Success criteria:**
-  - `uv run pytest -q` passes; the new assertions fail if the tensor is dropped or mis-shaped
-    (checked by reverting the `embed.py` line once).
-  - `jepa-scope clip.mp4` on a clip with a version-1 cache file re-embeds and prints the cache
-    reason.
+  - `uv run pytest -q` passes; the new assertions fail if the tensor is dropped, mis-shaped or
+    taken from the wrong window (checked once by breaking each, noted in the log).
+  - `jepa-scope clip.mp4` on the existing version-1 cache file prints the re-embedding message,
+    re-embeds, and leaves one file in `~/.cache/jepa-scope`, not two.
 - **Verification:** `uv run pytest -q tests/test_pipeline.py`; `uv run ruff check src tests`;
-  `uv run jepa-scope <local clip> --no-browser` once.
+  `uv run jepa-scope <local clip> --no-browser` once; `ls ~/.cache/jepa-scope`.
 - **Escalate if:** the owner prefers no format change (then the trajectory view would need patches
   for every indexed clip; re-plan T4 and T8).
 
@@ -291,17 +349,22 @@ flowchart LR
 - **Execution:** Executor
 - **Owner time:** None
 - **Expected files/workspaces:** `src/jepa_scope/search.py` (new), `tests/test_index.py`
-- **Objective:** `prepare(index) -> SearchSpace` (the centred, normalised matrix, kept on the
-  `Index`), `nearest_moments(space, clip, window, k)` and `nearest_clips(space, clip, k)` with the
-  exclusion and suppression rules in Approach, plus `query_vector(space, pooled_rows)` for an
-  external query video (T4's `search` command) and `centre: bool = True`. Tests on a synthetic
-  index of a few clips:
-  - an exact duplicate row scores 1.0 and ranks first;
-  - a row scaled by 2 also scores 1.0 (normalisation has teeth);
+- **Objective:** `prepare(index, centre) -> SearchSpace` (the normalised matrix, centred or not,
+  kept on the `Index`; `centre` defaults to the rule in Approach, at least 10 clips),
+  `window_at(space, clip, t)` (the window whose centre is nearest `t`),
+  `nearest_moments(space, clip, window, k)` and `nearest_clips(space, clip, k)` with the exclusion,
+  suppression and widening rules in Approach, plus `query_vector(space, pooled_rows)` for an
+  external query video (T4's `search` command). Tests on a synthetic index, each stating whether
+  it runs centred or not:
+  - an exact duplicate row scores 1.0 and ranks first (both paths);
+  - a row scaled by 2 scores 1.0 against the original (plain-cosine path only, where it must hold);
   - the query window and its overlapping neighbours in the same clip never appear;
   - two overlapping hits in one clip collapse to the better one;
+  - a folder where suppression removes most candidates still returns k hits when k exist;
   - with a large common offset added to every vector plus a planted structure, centred search
-    recovers the structure and raw search does not (the centring test has teeth);
+    recovers the structure and plain search does not (the centring test has teeth);
+  - folders of 9 and 10 clips choose plain and centred cosine respectively;
+  - `window_at` picks the later window for a time in the second half of an overlap;
   - `nearest_clips` excludes the query clip.
 - **Success criteria:** every test fails when its rule is removed (checked once by hand, noted in
   the log).
@@ -322,17 +385,21 @@ flowchart LR
 - **Objective:** `build_or_refresh(folder, encoder_factory, settings, out, recursive, patches, log)`
   as in Approach. The cache lookup reuses `cli._cache_path`; move it and `_cache_is_valid` into a
   small `cache.py` so `indexing.py` does not import the CLI. The encoder is created lazily, only
-  when a clip must be embedded, so a refresh with nothing new never loads the model. CLI additions
-  are as in Approach; `jepa-scope <folder>` runs the refresh then serves. Tests use `tiny_encoder`
-  on a tmp folder of three synthetic videos (the moving square, an exact copy under another name,
-  and a constant-grey clip):
-  - the index has three clips with 5 windows each;
+  when a clip must be embedded, so a refresh with nothing new never loads the model. T4 adds the
+  `index` and `search` commands only; the default command and `view` learn about folders in T6.
+  Tests use `tiny_encoder` on a tmp folder of five videos: the moving square, an exact copy under
+  another name, the square moving right to left (a plausible alternative), a constant-grey clip,
+  and a one-second clip shorter than a window:
+  - the index has four clips with 5 windows each, and the one-second clip is listed under
+    `skipped` with its reason;
   - a second run embeds nothing (count calls through a wrapper);
   - touching one file's mtime without changing bytes re-hashes but does not re-embed;
   - rewriting one file re-embeds only it; deleting one drops it;
+  - deleting one clip's cache file makes the next refresh re-embed only that clip;
   - a settings change rebuilds everything;
-  - `nearest_clips` from the moving square ranks its copy first with a score within 1e-6 of 1.0
-    and the grey clip last;
+  - with plain cosine (four clips is below the centring threshold), `nearest_clips` from the moving
+    square ranks its copy first with a score within 1e-6 of 1.0, and the reversed square's score
+    lies strictly between the copy's and the grey clip's;
   - `nearest_moments` from any window of the square finds the copy's matching window with a score
     within 1e-6 of 1.0.
 - **Success criteria:** the tests above; `jepa-scope index <folder>` on a real folder prints
@@ -340,8 +407,10 @@ flowchart LR
   model load; `jepa-scope search <folder> <clip> --at 3` prints a ranked table.
 - **Verification:** `uv run pytest -q`; `uv run jepa-scope index <a local folder>` twice; ruff.
 - **Escalate if:** cache reuse needs the cache key to change (an `OUTPUT_VERSION` question for the
-  owner), or the tiny encoder's duplicate does not score 1.0 (non-determinism in the pipeline,
-  which would be a finding in itself).
+  owner); the tiny encoder's duplicate does not score 1.0 (non-determinism in the pipeline, which
+  would be a finding in itself); or the reversed square does not land between the copy and the
+  grey clip (the tiny encoder is seeded, so the outcome is fixed; report it with the scores rather
+  than drop the assertion).
 
 ### T5 — Week 3. The real-model retrieval check, with its bar set here
 
@@ -356,25 +425,36 @@ flowchart LR
 - **Objective:** Add `test_search_groups_kinetics_classes`, opt-in under the same environment
   variable. Download the 50 `val/` clips of `nateraw/kinetics-mini` (five classes: archery,
   bowling, flying_kite, high_jump and marching, ten clips each, about 10 s each) with
-  `snapshot_download(allow_patterns="val/*")` into a tmp folder, build the index with the indexer
-  at the defaults (8 fps, 16-frame windows, no patches, about 450 windows), and measure, leaving
-  one clip out at a time:
+  `snapshot_download(allow_patterns="val/*")` (about 95 MB) into a tmp folder, build the index
+  with the indexer at the defaults (8 fps, 16-frame windows, no patches, about 450 windows), and
+  measure, leaving one clip out at a time:
   - (a) the clip-level top-1 same-class rate over the 50 clips (chance 9/49 = 18.4%);
   - (b) the window-level top-1 same-class rate over all windows, excluding the query's own clip;
-  - (c) both of these with raw cosine as well as centred;
-  - (d) a permutation control: the clip-level rate under 1,000 random relabellings, reporting the
-    99th percentile.
+  - (c) both of these with plain cosine as well as centred (50 clips is above the threshold, so
+    centred is the default here);
+  - (d) a model-free baseline: the clip-level rate when each clip is represented by the
+    colour histogram of its middle frame (8 bins per RGB channel, cosine), which takes seconds;
+  - (e) a single-frame V-JEPA control: each clip's middle frame repeated 16 times, written as a
+    clip and indexed through the same code (50 extra windows, about three minutes), with its
+    clip-level rate.
 
-  Print everything. **Bars, fixed now:** the test passes only if the centred clip-level top-1 rate
-  is at least 0.60 and exceeds the permutation 99th percentile. Miss either and the task escalates
-  with the numbers; the bar is not moved in the same session. If raw cosine beats centred by five
-  points or more at clip level, the default flips (one line, logged); otherwise centred stays.
-- **Success criteria:** the test passes at the bars above; the log records all four numbers, the
+  Print everything, and log each clip's resolution and bitrate beside its top hit so that
+  clustering by resolution can be checked afterwards rather than guessed. **Bars, fixed now:** the
+  test passes only if the centred clip-level top-1 rate is at least 0.60 **and** at least 0.15
+  above the colour baseline (d). Miss either and the task escalates with the numbers; the bars are
+  not moved in the same session. The single-frame control (e) is not a pass condition, because the
+  five classes differ by scene and a single frame may retrieve well; its comparison with the full
+  windows is recorded in the README either way, as the evidence on whether search reflects motion
+  or mostly scene. If plain cosine beats centred by five points or more at clip level, the default
+  flips (one line, logged); otherwise centred stays. The fast tests already check that a query
+  never retrieves its own clip, so no permutation control is needed for that.
+- **Success criteria:** the test passes at the bars above; the log records every number, the
   download size and the run time.
 - **Verification:** `JEPA_SCOPE_MODEL_TESTS=1 uv run pytest tests/test_real_model.py -s -k search`.
-- **Escalate if:** either bar is missed. The options are then a different pooling (the mean of
-  layer-normalised tokens, or dropping the context half of each window) or a different unit,
-  chosen by the owner, and the fast checks stay as they are.
+- **Escalate if:** either bar is missed. The options are then a different vector, chosen by the
+  owner: pooling only the predicted half of each window, only the context half, or the hidden
+  state before the encoder's final layer norm. (Re-normalising the tokens is not an option: the
+  encoder's output is already layer-normalised.) The fast checks stay as they are.
 
 ### T6 — Week 3. The server serves a folder
 
@@ -384,18 +464,20 @@ flowchart LR
 - **Complexity:** STRONG
 - **Execution:** Lead session or an Opus executor
 - **Owner time:** None
-- **Expected files/workspaces:** `src/jepa_scope/server.py`, `src/jepa_scope/cli.py` (`_serve`),
-  `web/src/types.ts` (types only, so T7 starts from a settled contract), `tests/test_pipeline.py`,
-  `tests/test_index.py`
+- **Expected files/workspaces:** `src/jepa_scope/server.py`, `src/jepa_scope/cli.py` (`_serve`,
+  the default command and `view` accepting a folder or an index), `tests/test_pipeline.py`,
+  `tests/test_index.py`. The API is documented in `server.py`'s module docstring; `types.ts`
+  changes in T7 with the code that uses it, so the viewer builds at every commit.
 - **Objective:** Endpoints and behaviour as in Approach, without the Week 4 ones. Keep
   `create_app(latent_path, video_path, video_sha256)` working by wrapping the file as a one-clip
   index. Update `test_server_endpoints` to the new paths and add a folder-mode test on the T4
-  fixture: `/api/meta` lists three clips; `/api/clips/1/pca` has the right length;
+  fixture: `/api/meta` lists four clips; `/api/clips/1/pca` has the right length;
   `/api/clips/2/video` serves ranges; `/api/search?clip=0&window=2&k=3` returns the copy's
-  matching window first; and a clip whose video was replaced returns 409 with the index message.
+  matching window first; a clip whose video bytes were replaced (same size, mtime restored)
+  returns 409 with the index message; and a clip whose mtime alone changed is served.
 - **Success criteria:** both modes pass. `uv run jepa-scope view x.latent --no-browser` serves the
   data at the new paths; the built viewer reads them once T7 lands (until then the old viewer
-  shows an error, which is expected and noted).
+  shows an error; T6 and T7 ship in one pull request, so no merged state has that error).
 - **Verification:** `uv run pytest -q`; `curl -s localhost:8765/api/meta | head -c 400`.
 - **Escalate if:** lazy loading needs more than an LRU (for example, memory pressure from
   patches-bearing cache files; the fix would be loading only the timeline tensors with
@@ -413,6 +495,7 @@ flowchart LR
   `web/src/SearchPanel.tsx` (new), `web/src/types.ts`, `web/src/index.css`, `README.md`
 - **Objective:** As in Approach. Clip switching keeps the mode, opacity and smoothing; the URL hash
   tracks the clip so reloads keep it; search rows open and seek; keyboard shortcuts are unchanged.
+  The search panel shows the query's time span and labels scores as relative to this folder.
   Single mode hides the clip list and shows "similar moments" within the clip. The lead checks it
   in a browser on a small folder (the T4 fixture written to a temp folder, then a real folder of
   the owner's clips) and records what was seen in the log.
@@ -433,15 +516,16 @@ flowchart LR
 - **Complexity:** ROUTINE
 - **Execution:** Executor
 - **Owner time:** None
-- **Expected files/workspaces:** `src/jepa_scope/server.py`, `src/jepa_scope/pca.py` (a `project`
-  helper if `to_rgb`'s scaling is not wanted; keep `fit`), `web/src/types.ts`,
+- **Expected files/workspaces:** `src/jepa_scope/server.py` (and its API docstring),
+  `src/jepa_scope/pca.py` (a `project` helper if `to_rgb`'s scaling is not wanted; keep `fit`),
   `tests/test_pipeline.py`
 - **Objective:** `GET /api/clips/{id}/trajectory?fit=folder|clip` and `GET /api/cloud` as in
   Approach, with the 50,000-point cap and the chosen rows in `/api/meta`. Tests: the trajectory has
-  `count` rows of 3 floats; with `fit=folder`, the mean of a window's tubelet points equals that
-  window's cloud point within 1e-4 (the centroid property, which fails if the two use different
-  fits); `fit=clip` works in single mode; `fit=folder` in single mode returns 400.
-- **Success criteria:** tests pass; the centroid test fails when the cloud is projected with a
+  `count` rows of 3 floats; with `fit=folder`, the server's trajectory and cloud bytes equal
+  `timeline_pooled` and `pooled` projected with one `(mean, components)` computed independently in
+  the test from the index (the shared-axes property); `fit=clip` gives different axes from
+  `fit=folder`; `fit=clip` works in single mode; `fit=folder` in single mode returns 400.
+- **Success criteria:** tests pass; the shared-axes test fails when the cloud is projected with a
   per-clip fit (checked once).
 - **Verification:** `uv run pytest -q`.
 - **Escalate if:** none expected.
@@ -455,20 +539,26 @@ flowchart LR
 - **Execution:** Lead session
 - **Owner time:** 1 h (approve the dependency if not already decided; review; live check)
 - **Expected files/workspaces:** `web/package.json`, `web/package-lock.json`,
-  `web/src/Trajectory.tsx` (new), `web/src/App.tsx`, `web/src/index.css`, `README.md`
+  `web/src/Trajectory.tsx` (new), `web/src/App.tsx`, `web/src/types.ts`, `web/src/index.css`,
+  `tests/test_real_model.py` (the separation ratio), `README.md`
 - **Objective:** As in Approach. Add `three` and `@types/three` pinned to exact versions current at
   execution time. The marker follows the current tubelet; hovering a path point shows its time;
   clicking seeks; search hits from the open result list are highlighted in the cloud; the fit
   toggle refetches the trajectory. Dispose the renderer and geometry on unmount and on clip switch.
-  Check it on the archery-onto-bowling cut clip the existing real-model test builds (two clusters
-  joined by one long segment, with the hot tubelets right after the cut) and on a folder.
+  Check it on the archery-onto-bowling cut clip the existing real-model test builds, and on a
+  folder. The shape check is numeric, on the 3D points, with the bar fixed now: the separation
+  ratio (the distance between the centroids of the pre-cut and post-cut tubelets divided by the
+  mean distance of tubelets to their own segment's centroid) is at least 3 on the cut clip and
+  below 3 on an uncut 10-second Kinetics clip split at its midpoint, both with `fit=clip` in single
+  mode. The ratio is printed by an opt-in test in `tests/test_real_model.py`; the visual check is
+  for the view, not the evidence.
 - **Success criteria:** the three web commands and `./scripts/build.sh` pass; the wheel grows by
-  less than 1 MB; the cut clip shows the two-cluster shape and the marker tracks playback without
+  less than 1 MB; the separation ratios meet the bars above; the marker tracks playback without
   visible lag; a fresh `reviewer` pass on T8–T9.
 - **Verification:** `cd web && npx tsc -b && npx oxlint --type-aware src && npm run build`;
   `./scripts/build.sh`; the lead's browser check with notes.
-- **Escalate if:** the cut clip does not show the expected shape under either fit. That is a
-  finding about the embedding, not the view; report it rather than adjust the view.
+- **Escalate if:** either separation bar is missed. That is a finding about the embedding, not the
+  view; report it with the numbers rather than adjust the view or the bar.
 
 ### T10 — Week 4. Documentation, decisions and closeout
 
@@ -493,9 +583,9 @@ flowchart LR
 
 ## Execution strategy
 
-- **Lead/orchestrator owns:** the architecture, every shared-contract edit (T1, T6's `types.ts`),
-  the viewer work (T7, T9), the real-model run (T5), integration, and every exchange with the
-  owner.
+- **Lead/orchestrator owns:** the architecture, every shared-contract edit (T1, the API in T6, and
+  `types.ts` in T7 and T9), the viewer work (T7, T9), the real-model runs (T5, T9), integration,
+  and every exchange with the owner.
 - **Delegated tasks:** T2, T3 and T8 to `executor` (ROUTINE, self-contained, tests included); T4
   and T6 to an Opus `executor` if the lead wants them concurrent, otherwise the lead does them in
   order.
@@ -503,8 +593,8 @@ flowchart LR
   STRONG with its bar fixed here by the planner. Every review runs on `reviewer` at its default.
 - **Owner time, total:** about 4 hours over the two weeks: the approval gate (0.5), T4 (0.5), T5
   (0.3), T7 (1), T9 (1), T10 and merges (0.5), plus the questions below (0.3).
-- **Compute:** laptop only. The heaviest step is T5 (about five minutes of embedding on an M3 Max
-  and a 100 MB download). No GPU, no spend.
+- **Compute:** laptop only. The heaviest step is T5 (about eight minutes of embedding on an M3 Max,
+  including the single-frame control, and a 95 MB download). No GPU, no spend.
 - **Approval gates:**
   - Owner approval of this plan's questions and of T1 as the first small change before any code
     file is edited.
@@ -554,13 +644,31 @@ Kept in `docs/plans/2026-11-06-weeks3-4-folder-search-trajectory-log.md` in the 
 - [ ] `jepa-scope clip.mp4` (single mode) still works, including the SHA-256 refusal
 - [ ] The real-model retrieval check passes at its bars and its numbers are in the README and the
   log
-- [ ] The trajectory view on the cut clip shows two clusters joined by one long segment, under both
-  fits
+- [ ] The separation ratio is at least 3 on the cut clip and below 3 on the uncut clip
 - [ ] A replaced video is refused with the "run index again" message
 
 ### Plan review
-- **Reviewers:** a fresh Fable agent and ChatGPT Astra, adversarially, before the owner approves
-- **Verdict:** Pending
+- **Reviewers:** a fresh Fable agent, then ChatGPT Astra on the revised plan, adversarially,
+  before the owner approves.
+- **Round 1 (Fable, 2026-11-06): sound with changes.** Two critical findings, both confirmed in
+  the code and fixed in this revision. The planned "centroid property" test was false, because
+  every window after the first owns only its predicted half of the timeline, and the timeline
+  features are float16 while the window vectors are float32. Two planted search checks could not
+  fail: a scaled vector does not score 1.0 once centred, and with three clips of which two are
+  identical, centring forces the third to score −1. Six major findings were also fixed:
+  - the server, not the index refresh, now owns the hash check;
+  - `OUTPUT_VERSION` is no longer bumped, since a bump would orphan cache files;
+  - the index stores cache keys rather than absolute paths, and the refresh re-embeds when a
+    cache file is missing;
+  - the folder commands move to T6 so no merged pull request offers a command that cannot run;
+  - T5 gains a colour baseline and a single-frame control, because Kinetics-mini's classes differ
+    by scene;
+  - the T5 fallback options no longer include re-normalising tokens that are already normalised.
+
+  The minor findings changed the centring rule for small folders, the query window, result-list
+  widening, per-clip failure handling, a numeric trajectory check, where the API types land and
+  the format-version test.
+- **Round 2 (Astra):** pending.
 
 ### Independent review
 - **Reviewer:** `reviewer` (Opus, high), at the end of each week as above
@@ -573,19 +681,21 @@ Kept in `docs/plans/2026-11-06-weeks3-4-folder-search-trajectory-log.md` in the 
    before your folders are indexed.
 2. **Search unit, embedding, distance, query types.** Windows for "moments like this moment" and the
    mean of windows for "clips like this clip", both over mean-pooled window vectors, with cosine
-   after subtracting the index mean (raw cosine measured beside it in T5). Not patches, not
-   tubelets.
+   after subtracting the folder mean when the folder has at least 10 clips, and plain cosine below
+   that (plain cosine is measured beside centred in T5). Not patches, not tubelets.
 3. **Where the index lives and whether it is a contract.** One self-contained `jepa-scope.index`
    safetensors file in the folder (`--out` for read-only folders), versioned by
-   `INDEX_FORMAT_VERSION`, kept consistent by size-and-mtime then SHA-256, rebuilt when settings
-   change, with a decision record. The cache directory stays for `.latent` files only.
+   `INDEX_FORMAT_VERSION`, refreshed by size-and-mtime then SHA-256, rebuilt when settings change,
+   with a decision record. The cache directory stays for `.latent` files only. The alternative is
+   a hidden `.jepa-scope.index`, which keeps synced or versioned folders tidier but hides what the
+   tool wrote; the recommendation is the visible file.
 4. **Brute force or an approximate-nearest-neighbour library.** NumPy brute force. It is
    comfortable to about half a million windows (a few hundred hours of video), and a library can
    replace `search.py`'s body later without changing the file.
-5. **The `.latent` format change first.** Add `timeline_pooled` now as T1 (FORMAT_VERSION 2,
-   OUTPUT_VERSION 3). It re-embeds your current cache (one 36 MB file today) and means Week 3's
-   indexing already stores what Week 4 plots. The alternative is to defer it to Week 4 and
-   re-embed every indexed folder then.
+5. **The `.latent` format change first.** Add `timeline_pooled` now as T1 (FORMAT_VERSION 2;
+   OUTPUT_VERSION unchanged). It re-embeds your current cache (one 36 MB file today, replaced in
+   place) and means Week 3's indexing already stores what Week 4 plots. The alternative is to defer
+   it to Week 4 and re-embed every indexed folder then.
 6. **Trajectory view: Three.js or no new dependency.** Three.js (pinned, about 0.5 MB in the wheel)
    for a 3D path with the folder cloud, PCA fitted on the folder by default with a per-clip toggle,
    per-tubelet points coloured by surprise, hover for the time and click to seek. The fallback is a
@@ -595,11 +705,13 @@ Kept in `docs/plans/2026-11-06-weeks3-4-folder-search-trajectory-log.md` in the 
    `jepa-scope view` accepting a folder, an index or a `.latent`. The indexer embeds without
    patches by default (`--patches` keeps them) and reuses any cache file that already exists.
 8. **The real-model bar.** On Kinetics-mini's 50 validation clips (5 classes × 10), the
-   leave-one-clip-out clip-level top-1 same-class rate is at least 0.60 (chance 0.18) and above the
-   99th percentile of 1,000 label permutations. A miss escalates with the numbers, and the bar is
-   not lowered in the same session.
-9. **Pull-request grouping.** Four PRs (T1; T2–T5; T6–T7; T8–T10), each merged by you; fold T1 into
-   the second if you prefer three.
+   leave-one-clip-out clip-level top-1 same-class rate is at least 0.60 (chance 0.18) and at least
+   0.15 above a model-free colour-histogram baseline. A single-frame V-JEPA control is measured and
+   reported but is not a pass condition, since these classes differ by scene. A miss escalates
+   with the numbers, and the bar is not lowered in the same session.
+9. **Pull-request grouping.** Four PRs (T1; T2–T5, which adds the `index` and `search` commands;
+   T6–T7, which adds folder viewing; T8–T10), each merged by you; fold T1 into the second if you
+   prefer three.
 
 ## Completion summary
 
