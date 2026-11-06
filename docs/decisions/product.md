@@ -5,6 +5,24 @@ lean, auto-loaded index is `docs/decisions.md`.
 
 ---
 
+## 2026-11-06 — The planning protocol is drafted here (`src/jepa_scope/planning/`, `docs/planning-protocol.md`) and moves to latent-plan when that project starts
+
+**Status:** live, indexed
+
+**Context.** The roadmap's Week 1 included running `eb_jepa`'s Two Rooms example and drafting
+the planning protocol, which belongs to latent-plan, the third tool, and does not exist yet.
+
+**Decision.** The draft lives in `src/jepa_scope/planning/` (protocol, reference CEM, `eb_jepa`
+adapter) with its spec in `docs/planning-protocol.md`. It depends only on torch; `eb_jepa` is
+imported only when the adapter is built and is never a dependency. The code moves to latent-plan
+when that project starts.
+
+**Rejected.**
+- *Starting the latent-plan repository now.* Its plan, UI and audience are not decided; a draft
+  in an existing tested package is cheaper to change.
+
+---
+
 ## 2026-11-05 — Apache-2.0, public at ryangswe/jepa-scope; V-JEPA 2 weights are downloaded at run time, never redistributed
 
 **Status:** live, indexed

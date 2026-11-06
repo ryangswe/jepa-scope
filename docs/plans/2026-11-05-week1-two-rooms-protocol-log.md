@@ -117,3 +117,24 @@ Plan: `2026-11-05-week1-two-rooms-protocol.md`. Entries are appended as work pro
   - **Impact:** T5's decision line should read as the architect worded it: a Markov planning state as one fixed-shape tensor, a one-step stateless `predict`, a model-owned `energy`, and a summed objective by default.
   - **Resolution:** applied; the outside ChatGPT review of the spec happens at the PR.
   - **Permanent decision record needed:** Yes (in T5, with the protocol decision).
+
+- **2026-11-06 — T4: all five opt-in tests pass; the protocol planner succeeds in 16 of 20 paired episodes.**
+  - **Evidence:** `t4_run.log` in the lab, 5 passed in 4,903 s (1 h 22 min) on the M3 Max CPU, float32.
+    - Paired success: protocol 16/20 (80%), native 18/20 (90%). Native-only successes are episodes 7 and 12; protocol-only successes are none; both failed episodes 2 and 3. The margin is 2, the largest the pre-set rule allows. The protocol rate clears the 70% bar.
+    - Mean protocol episode time 166 s (155–192 s), against 805 s for eb_jepa's native CEM on the same CPU in T1, because the protocol encodes the current observation once per re-plan rather than once per sample.
+    - Greedy baseline 9/20 (45%), 35 points below the protocol, so it is not an escalation. It succeeds on episode 2, which both planners fail, and on episode 7.
+    - Untrained control 0/10.
+  - **Impact:** T4's success criteria are met. A 2–0 split is what equal planners produce about half the time (each discordant episode is a coin flip under equal planners), so it is not evidence of a gap; 20 episodes cannot rule out a gap of about 10 points either.
+  - **Resolution:** T4 complete. An exploratory reseed of episodes 7 and 12, outside the pass rule, follows.
+  - **Permanent decision record needed:** No.
+
+- **2026-11-06 — T4 (exploratory, outside the pass rule): episodes 7 and 12 succeed with other planner seeds.**
+  - **Evidence:** `~/Workspace/eb_jepa-lab/scripts/t4_reseed.py` replanned only episodes 7 and 12 (the other episodes stood still, so the layouts are the same) with CEM generator seeds 1 and 2. All four runs succeeded (distances 0.11–0.22).
+  - **Impact:** the two protocol-only failures in the paired run came from the planner's random sampling on that seed, not from the adapter. The pass verdict does not change and rests on the pre-set rule alone.
+  - **Resolution:** recorded; T4 stays complete.
+  - **Permanent decision record needed:** No.
+
+- **2026-11-06 — T5: checkpoint found a pre-existing random failure in the build's wheel check; fixed.**
+  - **Evidence:** `scripts/build.sh` failed in 3 of 5 runs with "does not contain the built viewer" while the wheel did contain it. Under bash with `set -o pipefail`, `unzip -l | grep -q` failed in 142 of 300 trials (grep exits at the first match and unzip dies on the closed pipe), and 0 of 300 without `-q`. The check came in with the first commit.
+  - **Resolution:** the script reads the listing first and then searches it (commit 115f87c); 6 of 6 builds pass, and the check still fails on a wheel built without the viewer.
+  - **Permanent decision record needed:** No.

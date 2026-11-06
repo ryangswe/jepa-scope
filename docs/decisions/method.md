@@ -5,6 +5,42 @@ index is `docs/decisions.md`.
 
 ---
 
+## 2026-11-06 — Planning protocol: a Markov planning state as one fixed-shape tensor, one-step stateless predict, model-owned energy, summed objective by default
+
+**Status:** live, indexed
+
+**Context.** The 2026-11-03 product decision said the tools target a model-agnostic protocol
+rather than V-JEPA 2. Week 1 drafted that protocol and checked it against `eb_jepa`'s Two Rooms
+model. latent-plan will build on it, with V-JEPA 2-AC as its second model, so its shape is costly
+to change later.
+
+**Decision.** A world model has `latent_shape`, `action_dim`, `encode(obs)`, `predict(z, a)` and
+`energy(z, z_goal)`. `z` is a planning state: one fixed-shape tensor holding everything the next
+prediction needs, which may be more than the latent `energy` compares (for V-JEPA 2-AC, its token
+context and the arm's pose). `predict` takes one step and keeps no state. `encode` accepts the
+model's own observation type. `plan_cost` sums the energy over all `T + 1` rollout states by
+default, with `"last"` as a planner setting. The owner approved the signatures, and later the
+Fable architect's changes (planning state, `encode(obs: Any)`, the objective setting).
+
+**Evidence.** Through an adapter, rollouts and costs match `eb_jepa`'s own exactly, and the
+reference CEM succeeded in 16 of 20 episodes against 18 of 20 for `eb_jepa`'s planner on the
+same episodes (details in `docs/planning-protocol.md`). vjepa2's planner (`notebooks/utils/
+mpc_utils.py`) starts from one image and grows its context from its own predictions, so its
+state is Markov and fits a stateless `predict`.
+
+**Rejected.**
+- *An explicit history argument or an `initial_state(obs_history)` hook.* Neither target model's
+  planner uses an observation history, and a fixed history length does not hold the pose.
+- *An opaque state object with a separate latent.* `cem_plan` expands `z0` with tensor
+  operations, so it would also need an `expand_state` operation; two new operations before any
+  adapter needs them.
+- *A summed objective hard-coded into `plan_cost`.* V-JEPA 2-AC's planner scores only the final
+  frame, and a parity check against it needs the same objective.
+- *Deferred, not rejected:* `latent(z) -> [B, *latent]` for drawing latents along a plan, to be
+  decided when latent-plan is planned.
+
+---
+
 ## 2026-11-05 — Surprise = mean L1 between predictor output and layer_norm(target), with the context frames encoded on their own; never the HF full-clip forward
 
 **Status:** live, indexed

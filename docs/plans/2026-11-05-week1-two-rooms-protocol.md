@@ -139,7 +139,7 @@ flowchart LR
 
 ### T4 — Wrap the trained model in the protocol and check parity and planning success through it
 
-- **Status:** In progress
+- **Status:** Done
 - **Dependencies:** T2, T3
 - **Parallel group:** Sequential
 - **Complexity:** STRONG

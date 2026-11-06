@@ -164,7 +164,54 @@ it.
 eb_jepa counts an episode as a success by the agent's distance to the goal after the last allowed
 step, not when it first reaches the goal, and the numbers here use the same rule.
 
-**Through the protocol.** Pending; the adapter and its parity and planning checks come next.
+The run was trained and evaluated with these commands, from the eb_jepa clone, in the environment
+described under Adapters (on a CUDA machine for training). Boolean overrides need a capital
+`True` or `False`: eb_jepa merges command-line values into an untyped config, so a lowercase
+`false` arrives as the string `"false"`, which counts as true.
+
+```bash
+export EBJEPA_CKPTS=<checkpoint folder> WANDB_DISABLED=true
+python -m examples.ac_video_jepa.main --logging.log_wandb False --meta.enable_plan_eval False --meta.seed 1
+# <run> is the new folder under $EBJEPA_CKPTS/ac_video_jepa/
+cp <run>/config.yaml <run>/config.train.yaml   # the evaluation rewrites config.yaml
+python -m examples.ac_video_jepa.main --meta.model_folder <run> --meta.eval_only_mode True \
+  --meta.enable_plan_eval True --eval.plan_cfg_path examples/ac_video_jepa/cfgs/planning_cem.yaml \
+  --logging.log_wandb False
+```
+
+**Through the protocol.** `tests/test_eb_jepa_two_rooms.py` checks the adapter against that same
+run on a laptop CPU (Apple M3 Max, float32). It took 82 minutes.
+
+- **Parity.** On 8 observations and 8 random actions, `rollout` through the adapter matches
+  eb_jepa's own `JEPA.unroll` exactly (maximum difference 0.0), and `plan_cost` matches eb_jepa's
+  `ReprTargetDistMPCObjective` exactly. The reference is a separate `JEPA` loaded by eb_jepa's own
+  checkpoint loader, so the check does not compare the adapter with itself.
+- **Same episodes.** The test rebuilds eb_jepa's evaluation environment and replays its 20
+  episodes. Each replayed start frame matches the start frame eb_jepa saved for that episode.
+- **Planning.** The reference CEM, planning through the protocol with eb_jepa's settings,
+  succeeded in 16 of the 20 episodes (80%), against 18 of 20 for eb_jepa's own planner. eb_jepa's
+  planner alone succeeded in two episodes and the protocol's alone in none. The pass rule, fixed
+  before the run, was a protocol rate of at least 70% and at most two more episodes solved only by
+  the native planner than only by the protocol. With equally good planners, each episode that
+  only one of them solves is equally likely to go either way, so a 2–0 split is common; but 20
+  episodes also cannot rule out a gap of about 10 points.
+- **Baselines.** A policy that steps straight towards the goal succeeded in 9 of 20 episodes
+  (45%), so the task needs planning around the wall. The same planner on an untrained model of
+  the same architecture succeeded in none of 10.
+
+A protocol episode took 166 s on average on the laptop, against 805 s for eb_jepa's own CEM on
+the same machine, because the protocol encodes the current observation once per re-plan where
+eb_jepa encodes it once per sampled plan.
+
+To reproduce the check, train and evaluate a run with the commands above, then run this from the
+eb_jepa clone, in the same environment:
+
+```bash
+JEPA_SCOPE_TWO_ROOMS_CHECKPOINT=<run folder> python -m pytest <path to jepa-scope>/tests/test_eb_jepa_two_rooms.py -s
+```
+
+The run folder is the one eb_jepa's training script writes, and it must also hold that run's
+native CEM evaluation (`plan_eval/*_eval_only`), which the test compares against.
 
 ## Open points
 
