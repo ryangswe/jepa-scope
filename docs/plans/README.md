@@ -13,7 +13,7 @@ Add a plan as soon as its file is committed (a Draft counts); remove it when its
 Done, Closed, Superseded or Shelved. Every other file here is a record. `.claude/workflow/check.py` fails when this list and a
 plan's `Status:` line disagree.
 
-None at the moment.
+- `2026-11-06-weeks3-4-folder-search-trajectory.md`: Weeks 3 and 4, folder indexing, nearest-neighbour search and the latent trajectory view (Draft).
 
 ## Lifecycle
 
