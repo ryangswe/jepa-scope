@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor
 
-from jepa_scope.planning.protocol import WorldModel, plan_cost
+from jepa_scope.planning.protocol import Objective, WorldModel, plan_cost
 
 _NORM_EPS = 1e-6
 
@@ -51,6 +51,10 @@ class CEMConfig:
     max_norm: float | None = 2.45
     """Largest allowed norm of one action, or ``None`` for no limit."""
 
+    objective: Objective = "sum"
+    """How :func:`~jepa_scope.planning.protocol.plan_cost` scores a sample: ``"sum"`` over every
+    state of its rollout (eb_jepa's Two Rooms setting) or the ``"last"`` state only."""
+
     def __post_init__(self) -> None:
         if self.plan_length < 1 or self.n_iters < 1:
             raise ValueError("plan_length and n_iters must be at least 1")
@@ -60,6 +64,8 @@ class CEMConfig:
             raise ValueError("var_scale must be positive")
         if self.max_norm is not None and self.max_norm <= 0:
             raise ValueError("max_norm must be positive or None")
+        if self.objective not in ("sum", "last"):
+            raise ValueError("objective must be 'sum' or 'last'")
 
 
 @dataclass(frozen=True)
@@ -95,10 +101,10 @@ def cem_plan(
 ) -> CEMResult:
     """Plan an action sequence from ``z0`` towards ``z_goal`` with the Cross-Entropy Method.
 
-    ``z0`` and ``z_goal`` are single latent states, ``[1, *latent]``. Each sample is scored with
-    :func:`~jepa_scope.planning.protocol.plan_cost`. ``steps_left``, when given, caps the horizon
-    at the steps remaining in the episode. Pass a ``generator`` on ``z0``'s device for a
-    reproducible plan.
+    ``z0`` and ``z_goal`` are single planning states, ``[1, *latent]``. Each sample is scored
+    with :func:`~jepa_scope.planning.protocol.plan_cost` using ``config.objective``.
+    ``steps_left``, when given, caps the horizon at the steps remaining in the episode. Pass a
+    ``generator`` on ``z0``'s device for a reproducible plan.
     """
     config = config or CEMConfig()
     if z0.shape[0] != 1 or z_goal.shape[0] != 1:
@@ -120,7 +126,7 @@ def cem_plan(
         if config.max_norm is not None:
             actions = clip_action_norm(actions, config.max_norm)
 
-        costs = plan_cost(model, starts, actions, goals)
+        costs = plan_cost(model, starts, actions, goals, config.objective)
         best_costs.append(costs.min().item())
 
         elites = actions[torch.topk(costs, config.num_elites, largest=False).indices]

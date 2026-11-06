@@ -8,28 +8,35 @@ protocol has been checked against more than one model.
 
 ## What a world model implements
 
-A world model is any object with two attributes and three methods. Shapes put the batch first:
-`B` is the batch size, `A` is the action size, and `*latent` is the model's latent shape, which
-can have any number of dimensions.
+A world model is any object with two attributes and three methods. They work on a **planning
+state** `z`: one tensor of fixed shape that holds everything the model needs to predict the next
+step. For many models the planning state is simply the latent. For others it holds more, such as
+earlier predicted frames or a robot arm's pose, and the model's `energy` decides which part to
+compare with the goal. Shapes put the batch first: `B` is the batch size, `A` is the action size,
+and `*latent` is the shape of one planning state, which can have any number of dimensions.
 
 | Member | Shape | Meaning |
 |---|---|---|
-| `latent_shape` | `tuple[int, ...]` | The shape of one latent state, without the batch dimension. |
+| `latent_shape` | `tuple[int, ...]` | The shape of one planning state, without the batch dimension. |
 | `action_dim` | `int` | The size of one action vector, `A`. |
-| `encode(obs)` | `[B, *obs]` to `[B, *latent]` | Turns observations into latent states. |
-| `predict(z, a)` | `[B, *latent]` and `[B, A]` to `[B, *latent]` | Predicts the latent state one action later. |
+| `encode(obs)` | `B` observations to `[B, *latent]` | Turns observations into planning states. |
+| `predict(z, a)` | `[B, *latent]` and `[B, A]` to `[B, *latent]` | Predicts the planning state one action later. |
 | `energy(z, z_goal)` | `[B, *latent]` twice to `[B]` | Scores how far each state is from its goal. |
 
 The three operations have these rules.
 
+- `encode` accepts whatever observation type the model needs: an image tensor, or an image
+  together with a robot's pose, for example. Planners pass observations through without looking
+  inside them. `encode` is used for the start observation and for the goal observation, and
+  planners never call it on predicted states.
 - `predict` takes exactly one step and keeps no hidden state between calls. Everything the model
   needs in order to predict must be inside `z`. A recurrent model whose hidden state is its
-  latent (like the eb_jepa Two Rooms model) satisfies this directly.
-- `energy` is non-negative, is zero when `z` equals `z_goal`, and is lower when `z` is closer to
-  the goal. Its scale belongs to the model: energies can be compared within one model, never
-  across two models.
-- `encode` is used for the start observation and for the goal observation. Planners never call
-  it on predicted states.
+  latent (like the eb_jepa Two Rooms model) satisfies this directly. A model that predicts from
+  several frames keeps them inside `z`.
+- `energy` is non-negative and lower when `z` is closer to the goal. It is zero when the parts of
+  `z` that the model compares equal those of `z_goal`, so a goal state can leave the parts that
+  are not compared (such as a pose) as placeholders. Its scale belongs to the model: energies can
+  be compared within one model, never across two models.
 
 `WorldModel` in `protocol.py` is a `typing.Protocol`, so a model does not inherit from anything.
 `isinstance(model, WorldModel)` checks that the members exist, not their shapes.
@@ -42,14 +49,21 @@ Two functions are built on the three operations, and planners use only these two
 `actions` is `[B, T, A]`. It returns `[B, T + 1, *latent]`, with `z0` at index 0 and the state
 after action `t` at index `t + 1`.
 
-`plan_cost(model, z0, actions, z_goal)` is the cost of an action sequence. It is the sum of
-`energy` to the goal over all `T + 1` states of the rollout, including the start state, and it
-returns `[B]`. This is the objective eb_jepa uses for Two Rooms (`sum_all_diffs: true`). Summing
-over every state, rather than scoring only the last one, rewards reaching the goal early and
-gives every step of the plan a direct signal. It is also less sensitive to prediction error, which
-grows with the number of steps. eb_jepa's README reports a Two Rooms success rate of 97% for its
-MPPI planner with the summed cost and 89% with only the last state's cost. The start state adds the same amount to every candidate plan, so
-including it does not change which plan is best.
+`plan_cost(model, z0, actions, z_goal, objective="sum")` is the cost of an action sequence, and it
+returns `[B]`. The objective is a setting of the planner, not of the model, and has two values.
+
+- `"sum"`, the default, adds up the `energy` to the goal of all `T + 1` states of the rollout,
+  including the start state. This is the objective eb_jepa uses for Two Rooms
+  (`sum_all_diffs: true`). Summing over every state rewards reaching the goal early and gives
+  every step of the plan a direct signal. It is also less sensitive to prediction error, which
+  grows with the number of steps. eb_jepa's README reports a Two Rooms success rate of 97% for its
+  MPPI planner with the summed cost and 89% with only the last state's cost. The start state adds
+  the same amount to every candidate plan, so including it does not change which plan is best.
+- `"last"` scores only the final state. Some models' own planners use it, V-JEPA 2-AC's among
+  them, and comparing a model with its native planner needs the same objective.
+
+Which states `plan_cost` keeps in memory along the way is not part of the protocol, so a later
+version may compute the cost step by step instead of keeping the whole rollout.
 
 ## The reference planner: the Cross-Entropy Method
 
@@ -63,7 +77,7 @@ Each iteration works as follows.
 1. It samples `num_samples` action sequences from a Gaussian with a per-step, per-dimension mean
    and standard deviation. The mean starts at zero and the standard deviation at `var_scale`.
 2. If `max_norm` is set, it rescales every action to a norm of at most `max_norm`.
-3. It scores every sequence with `plan_cost`.
+3. It scores every sequence with `plan_cost`, using the configured `objective`.
 4. It takes the `num_elites` lowest-cost sequences and sets the new mean and standard deviation
    to their mean and their unbiased standard deviation.
 
@@ -72,21 +86,22 @@ horizon is `plan_length`, or the steps left in the episode when `steps_left` is 
 Every call starts afresh from a zero mean. A caller that plans again after each executed action
 (model-predictive control) gets eb_jepa's behaviour by executing the first action of each plan.
 
-`CEMConfig`'s defaults are eb_jepa's settings for Two Rooms (`planning_cem.yaml`): a horizon of
-90 actions, 20 iterations, 200 samples, 20 elites, an initial standard deviation of 1.5 and an
-action norm limit of 2.45. The planner mirrors `CEMPlanner.plan` in eb_jepa's `eb_jepa/planning.py`
-at commit `966e61e` step by step, including its norm-rescaling formula, so that the same model can
-be planned natively and through the protocol and the two can be compared. Pass a
-`torch.Generator` for a reproducible plan.
+`CEMConfig`'s defaults are eb_jepa's settings for Two Rooms (`planning_cem.yaml`): a horizon of 90
+actions, 20 iterations, 200 samples, 20 elites, an initial standard deviation of 1.5, an action norm
+limit of 2.45 and the summed objective. The planner mirrors `CEMPlanner.plan` in eb_jepa's
+`eb_jepa/planning.py` at commit `966e61e` step by step, including its norm-rescaling formula, so
+that the same model can be planned natively and through the protocol and the two can be compared.
+Pass a `torch.Generator` for a reproducible plan.
 
 ## Adding a model
 
-To plan with a new model, write an adapter class with the five members in the table above, then
-pass an instance to `cem_plan`. The adapter usually wraps the model's own encoder and predictor
-and picks an energy, often the mean squared distance between latents. Check it in two ways before
-trusting a plan. First, check that `rollout` through the adapter gives the same latents as the
-model's own multi-step prediction. Second, check that planning through the adapter succeeds as
-often as the model's own planner does on the same episodes.
+To plan with a new model, write an adapter class with the five members in the table above, then pass
+an instance to `cem_plan`. The adapter usually wraps the model's own encoder and predictor and picks
+an energy, often the mean squared distance between latents. If the model needs more than one latent
+to predict, the planning state packs them into one fixed shape. Check it in two ways before trusting a
+plan. First, check that `rollout` through the adapter gives the same latents as the model's own
+multi-step prediction. Second, check that planning through the adapter succeeds as often as the
+model's own planner does on the same episodes.
 
 ## Adapters
 
@@ -153,9 +168,32 @@ step, not when it first reaches the goal, and the numbers here use the same rule
 
 ## Open points
 
-- **Predictors with a context window.** V-JEPA 2-AC predicts from several past frames. The
-  stateless `predict` can carry that history inside `z`, but whether that is clean enough, or
-  whether the protocol needs an explicit history argument, is untested.
+- **Fitting V-JEPA 2-AC.** V-JEPA 2-AC is the next model this protocol should carry. Its own
+  planner (`notebooks/utils/mpc_utils.py` in `facebookresearch/vjepa2`) starts from one image,
+  grows the context with its own predicted frames during a rollout, and updates the robot arm's
+  pose from each action. That is a Markov state, so it fits `predict(z, a)` without a history
+  argument. A sketch, not yet built: the planning state holds a token context sized for the
+  longest horizon, plus one row with the pose and the number of valid frames, and `energy` is the
+  mean absolute difference over the latest valid frame's tokens, as in vjepa2's `l1`. The state
+  should stay in float32 so the pose keeps its precision, with only the tokens cast for the
+  predictor. Whether vjepa2 layer-normalises predicted tokens the same way as encoded ones
+  (its `normalize_reps` setting) must be checked when the adapter is written, because the energy
+  depends on it.
+- **A `latent(z)` operation.** A tool that draws the latents along a plan (latent-plan's
+  playground, for example) needs the comparable part of a packed planning state. A fourth operation,
+  `latent(z) -> [B, *latent]`, would give it: the identity for Two Rooms, a slice for V-JEPA
+  2-AC. Planners do not need it, so it is not part of this draft. Decide it when latent-plan is
+  planned, before its interface is built.
+- **Memory.** `rollout` keeps all `T + 1` states. For a planning state that holds a growing token
+  context, that memory grows with the square of the horizon: an estimated 2.6 GB for V-JEPA 2-AC's
+  ViT-g with 400 samples and 2 steps in bf16, and about 10 GB for 5 steps. That is fine for the
+  short horizons V-JEPA 2-AC plans over, and `plan_cost` does not promise to keep every state.
+- **Action spaces.** The protocol says only how long an action is. Bounds, discrete actions and
+  units are left to the planner's settings, such as `max_norm`, which limits each action's norm
+  as eb_jepa does. V-JEPA 2-AC's planner instead clips each dimension to a box, blends each new
+  mean and standard deviation with the previous ones (momentum), keeps rotation at zero, and
+  bounds and rounds the gripper. A planner matching it needs those settings, not only the
+  model's energy.
 - **Stochastic predictors.** `predict` returns one next state. Models that predict a distribution
   would need samples or an expected energy.
 - **Energy across models.** Energies are only comparable within one model. Comparing planners
@@ -163,5 +201,3 @@ step, not when it first reaches the goal, and the numbers here use the same rule
   when it compares prediction errors between clips.
 - **Goals per sample.** `plan_cost` takes one goal per batch row. Planning towards several goals
   at once works by repeating the start state, which costs memory.
-- **Action spaces.** The protocol says only how long an action is. Bounds, discrete actions and
-  units are left to the planner's settings, such as `max_norm`.

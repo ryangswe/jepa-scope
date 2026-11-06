@@ -1,5 +1,7 @@
 """The planning protocol and the reference CEM, checked on a point mass where the answer is known."""
 
+import dataclasses
+
 import pytest
 import torch
 
@@ -55,6 +57,26 @@ def test_plan_cost_sums_energy_over_every_state_including_the_start():
     assert plan_cost(model, z0, standing_still, z_goal).item() == pytest.approx(25.0 * 5)
 
 
+def test_last_objective_scores_only_the_final_state():
+    model = PointMass()
+    z0 = torch.zeros(1, 2)
+    z_goal = torch.tensor([[3.0, 4.0]])
+    actions = torch.tensor([[[1.0, 0.0], [1.0, 0.0]]])  # ends at (2, 0): energy 1 + 16
+    assert plan_cost(model, z0, actions, z_goal, "last").item() == pytest.approx(17.0, rel=1e-5)
+    with pytest.raises(ValueError, match="objective"):
+        plan_cost(model, z0, actions, z_goal, "mean")
+
+
+def test_cem_reaches_the_goal_with_either_objective():
+    model = PointMass()
+    z0, z_goal = torch.zeros(1, 2), torch.tensor([GOAL])
+    for objective in ("sum", "last"):
+        config = dataclasses.replace(SMALL, objective=objective)
+        plan = cem_plan(model, z0, z_goal, config, generator=_generator())
+        final = rollout(model, z0, plan.actions.unsqueeze(0))[0, -1]
+        assert torch.dist(final, z_goal[0]).item() < 0.5, objective
+
+
 def test_cem_reaches_the_goal_when_replanning_every_step():
     model = PointMass()
     z = model.encode(torch.zeros(1, 2))
@@ -103,7 +125,14 @@ def test_clip_action_norm_matches_the_eb_jepa_formula():
 
 @pytest.mark.parametrize(
     "settings",
-    [{"num_elites": 1}, {"num_elites": 300}, {"plan_length": 0}, {"var_scale": 0.0}, {"max_norm": -1.0}],
+    [
+        {"num_elites": 1},
+        {"num_elites": 300},
+        {"plan_length": 0},
+        {"var_scale": 0.0},
+        {"max_norm": -1.0},
+        {"objective": "mean"},
+    ],
 )
 def test_bad_settings_are_refused(settings):
     with pytest.raises(ValueError):

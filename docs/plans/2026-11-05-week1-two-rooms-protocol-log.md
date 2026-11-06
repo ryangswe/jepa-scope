@@ -102,3 +102,18 @@ Plan: `2026-11-05-week1-two-rooms-protocol.md`. Entries are appended as work pro
   - **Impact:** the paired success, greedy and untrained tests can be read as evidence once they finish.
   - **Resolution:** the full opt-in suite runs on the laptop under `caffeinate -i`, logging to `~/Workspace/eb_jepa-lab/t4_run.log`.
   - **Permanent decision record needed:** No.
+
+- **2026-11-06 — Design review: Fable architect on the protocol; the owner approved its changes.**
+  - **Evidence:**
+    - The owner offered Fable and outside (ChatGPT) reviews for complex work. A Fable architect reviewed the protocol before T5 records it as a decision, asking whether the three operations and stateless `predict` fit V-JEPA 2-AC, the second model latent-plan targets.
+    - Its answer: keep the design. V-JEPA 2-AC's planner starts from one image and grows its context from its own predictions while updating the arm's pose, which is a Markov state that fits `predict(z, a)` by packing. A separate fetch of `notebooks/utils/mpc_utils.py` and `world_model_wrapper.py` in `facebookresearch/vjepa2` confirmed this, along with final-frame-only L1 scoring, per-dimension box clipping, momentum, zero rotation, and layer-normed predictions under `normalize_reps`.
+  - **Changes (owner-approved 2026-11-06, "Approve as recommended"):**
+    - `encode(obs: Any)`: the observation type is the model's own (for example an image plus a pose).
+    - The spec and docstrings call `z` the planning state: one fixed-shape tensor that may hold more than the compared latent, with `energy` choosing what it compares.
+    - `plan_cost(..., objective="sum" | "last")` and `CEMConfig.objective`, defaulting to `"sum"`, so a model can be compared with a native planner that scores only the last state. The T4 run uses the default and is unaffected.
+    - `latent(z) -> [B, *latent]` is recorded in the spec as a named possible fourth operation, to decide when latent-plan is planned.
+    - New open points: how V-JEPA 2-AC would fit, memory growth of `rollout` with a growing context, keeping the pose in float32, and V-JEPA 2-AC's action handling.
+    - 17 toy tests pass (3 new), lint and the workflow check pass.
+  - **Impact:** T5's decision line should read as the architect worded it: a Markov planning state as one fixed-shape tensor, a one-step stateless `predict`, a model-owned `energy`, and a summed objective by default.
+  - **Resolution:** applied; the outside ChatGPT review of the spec happens at the PR.
+  - **Permanent decision record needed:** Yes (in T5, with the protocol decision).
