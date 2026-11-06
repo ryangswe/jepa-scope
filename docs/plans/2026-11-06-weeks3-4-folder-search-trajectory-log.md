@@ -127,3 +127,24 @@ The plan is `2026-11-06-weeks3-4-folder-search-trajectory.md`. Entries are newes
   - **Impact:** T3 builds on `Index`, `clip_rows` and `clip_vector`.
   - **Resolution:** committed on `week3-index`.
   - **Permanent decision record needed:** Yes, at T10 (the index file as a versioned contract).
+
+- **2026-11-06 — T3 complete: brute-force search (`search.py`).**
+  - **Evidence:** an executor (Sonnet) wrote the module; a fresh reviewer (Opus) did two rounds.
+    Round 1 found two real defects. First, ties were not ordered by `(clip, window)` at the
+    model's width on this Mac: Accelerate's float32 product gives exact duplicates scores 1 ulp
+    apart depending on row position (16 of 100 seeds out of order); candidates are now rescored
+    in float64 and ranked on that. Second, overlap was decided by start-time difference, which
+    real timestamp jitter breaks (about half of non-overlapping pairs looked overlapping); it is
+    now decided by window number (`|w1 - w2| * stride < frames`). It also had the centring mean
+    recomputed in float64 so identical clips are reliably "unavailable", fixed the reason
+    wording, and added `DEFAULT_SIMILARITY` and `nearest_window` for T4. Round 2 passed; its
+    three small follow-ups (a suppression test, a clipping test with teeth, and `MAX_K = 1000`
+    so one request cannot allocate hundreds of megabytes) were added by the lead.
+  - **Measured (estimates for the plan, this laptop, 30,000 × 1024):** `prepare` about 0.1 s;
+    a moment query about 1.5 ms; a clip query about 1 ms. The plan's 30 ms estimate was ten times
+    too pessimistic.
+  - **Deviation:** the search tests are in `tests/test_search.py`, not `tests/test_index.py`.
+  - **Impact:** T4's `search` command uses `query_vector`, `search_moments`, `search_clips` and
+    `nearest_window`; T6 maps `k > MAX_K` to a 400. T4 should repeat the window-weighted-mean
+    check against the indexer's output.
+  - **Permanent decision record needed:** Yes, at T10 (search as plain cosine over window means).

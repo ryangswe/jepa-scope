@@ -594,7 +594,7 @@ flowchart LR
 
 ### T3 — Week 3. Search on hand-built vectors
 
-- **Status:** Pending
+- **Status:** Complete
 - **Dependencies:** T2
 - **Parallel group:** Sequential
 - **Complexity:** ROUTINE
