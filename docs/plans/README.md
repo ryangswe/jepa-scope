@@ -13,7 +13,7 @@ Add a plan as soon as its file is committed (a Draft counts); remove it when its
 Done, Closed, Superseded or Shelved. Every other file here is a record. `.claude/workflow/check.py` fails when this list and a
 plan's `Status:` line disagree.
 
-- `2026-11-05-week1-two-rooms-protocol.md`: Week 1 closeout, running eb_jepa Two Rooms and drafting the planning protocol (In progress).
+None at the moment.
 
 ## Lifecycle
 

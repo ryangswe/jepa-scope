@@ -264,6 +264,78 @@ def test_rollout_and_cost_match_eb_jepa(run, model):
         torch.testing.assert_close(ours_cost, native_cost, rtol=1e-5, atol=1e-6)
 
 
+class _SameNoise:
+    """Stands in for the ``torch`` module inside a planner, so ``torch.randn`` returns given noise."""
+
+    def __init__(self, noises, layout):
+        self._noises = iter(noises)
+        self._layout = layout
+
+    def __getattr__(self, name):
+        return getattr(torch, name)
+
+    def randn(self, *shape, **kwargs):
+        return self._layout(next(self._noises)).clone()
+
+
+@pytest.mark.parametrize("steps_left", [None, 7])
+def test_cem_matches_eb_jepa_planner_on_the_same_noise(run, model, monkeypatch, steps_left):
+    """Fed the same Gaussian noise, the reference CEM returns eb_jepa's ``CEMPlanner`` plan."""
+    import eb_jepa.planning as eb_planning
+    from eb_jepa.planning import CEMPlanner, ReprTargetDistMPCObjective
+
+    import jepa_scope.planning.cem as cem_module
+    from jepa_scope.planning import CEMConfig, cem_plan
+
+    reference = _reference_jepa(run)
+    env = _make_env()
+    env.reset()
+    obs, _, _, _, info = env.step(np.zeros(2))
+    goal = info["target_obs"].float()
+    samples, length, iters, elites = 200, 25, 6, 20
+    horizon = length if steps_left is None else min(length, steps_left)
+    generator = torch.Generator().manual_seed(123)
+    noises = [torch.randn(samples, horizon, 2, generator=generator) for _ in range(iters)]
+
+    def unroll(obs_init, actions):
+        states, _ = reference.unroll(
+            obs_init.repeat(actions.shape[0], 1, 1, 1, 1),
+            actions,
+            nsteps=actions.shape[2],
+            unroll_mode="autoregressive",
+            compute_loss=False,
+        )
+        return states
+
+    with torch.no_grad():
+        obs5d = env.normalizer.normalize_state(obs.float()).unsqueeze(0).unsqueeze(2)
+        goal5d = reference.encode(env.normalizer.normalize_state(goal).unsqueeze(0).unsqueeze(2))
+        native_planner = CEMPlanner(
+            unroll,
+            n_iters=iters,
+            num_samples=samples,
+            plan_length=length,
+            action_dim=2,
+            var_scale=1.5,
+            num_elites=elites,
+            max_norms=[STEP_NORM],
+            decode_each_iteration=False,
+        )
+        native_planner.set_objective(ReprTargetDistMPCObjective(goal5d, sum_all_diffs=True))
+        # eb_jepa samples in a [T, N, A] layout; the reference CEM in [N, T, A].
+        monkeypatch.setattr(eb_planning, "torch", _SameNoise(noises, lambda n: n.permute(1, 0, 2)))
+        native = native_planner.plan(obs5d, steps_left=steps_left).actions
+        monkeypatch.setattr(cem_module, "torch", _SameNoise(noises, lambda n: n))
+        config = CEMConfig(
+            plan_length=length, n_iters=iters, num_samples=samples, num_elites=elites, max_norm=STEP_NORM
+        )
+        ours = cem_plan(model, model.encode(obs[None].float()), model.encode(goal[None]), config, steps_left=steps_left)
+    difference = (ours.actions - native).abs().max().item()
+    print(f"\nSame-noise CEM, steps_left={steps_left}: max |protocol plan - eb_jepa plan| = {difference:.2e}")
+    assert ours.actions.shape == native.shape == (horizon, 2)
+    assert difference < 1e-5
+
+
 def test_replay_matches_the_native_evaluation(tmp_path, native_episodes):
     """The replayed episodes are the ones eb_jepa evaluated: compare every first frame, drawn the
     same way eb_jepa drew its GIFs."""

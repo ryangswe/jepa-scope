@@ -1,7 +1,7 @@
 # Week 1 closeout: run eb_jepa Two Rooms and draft the planning protocol
 
 - **Date:** 2026-11-05
-- **Status:** In progress
+- **Status:** Done
 - **Planned by:** planner (Fable 5.1), briefed by the lead session
 - **Spec / source:** `docs/roadmap.md`, Week 1 table, last open step; layer E of "The missing toolchain"; the 2026-11-03 product decision that tools target a protocol rather than one model
 - **Branch:** `week1-two-rooms-protocol`
@@ -172,7 +172,7 @@ flowchart LR
 
 ### T5 — Close out: roadmap, decisions, plan status, review, owner summary
 
-- **Status:** Pending
+- **Status:** Done
 - **Dependencies:** T4
 - **Parallel group:** Sequential
 - **Complexity:** ROUTINE
@@ -216,34 +216,46 @@ flowchart LR
 
 ## Execution log
 
-Kept in `docs/plans/2026-11-05-week1-two-rooms-protocol-log.md`, in the template's entry format. Material items expected there: the T1 measurements and the GPU picked; for each pod, the image, GPU, tier, hourly price before creation, uptime, billed cost, deletion confirmation and the running total against the $25 cap; the T2 run folder and native numbers, any MPS attempt and its outcome, the T4 parity and success numbers, and any deviation from the planner settings.
+Kept in `docs/plans/2026-11-05-week1-two-rooms-protocol-log.md` while the work ran, then compressed into the completion summary below and deleted (git keeps it). It was kept in the template's entry format. Material items expected there: the T1 measurements and the GPU picked; for each pod, the image, GPU, tier, hourly price before creation, uptime, billed cost, deletion confirmation and the running total against the $25 cap; the T2 run folder and native numbers, any MPS attempt and its outcome, the T4 parity and success numbers, and any deviation from the planner settings.
 
 ## Integration and verification
 
 ### Integrated checkpoint
 
-- [ ] `/checkpoint` completed (lint → tests → build → workflow check)
-- [ ] Any checkpoint failures resolved and the checkpoint rerun
+- [x] `/checkpoint` completed (lint → tests → build → workflow check)
+- [x] Any checkpoint failures resolved and the checkpoint rerun (the build's wheel check failed at random; fixed in 115f87c)
 
 ### End-to-end acceptance
 
-- [ ] eb_jepa's own CEM evaluation on the trained model reports at least 80 % on 20 random-wall episodes, recorded in the spec with the machine and time.
-- [ ] The opt-in test passes from the lab venv: parity under 1e-5, the paired rule met, the untrained control at most 20 %, and the greedy baseline more than 10 points below the protocol.
-- [ ] CI passes with the opt-in test skipped and the toy test running.
-- [ ] `docs/planning-protocol.md` can be followed by a reader without eb_jepa to implement an adapter, and by a reader with the lab to reproduce the numbers.
+- [x] eb_jepa's own CEM evaluation on the trained model reports at least 80 % on 20 random-wall episodes, recorded in the spec with the machine and time (18/20 on an L40S, 45 s per episode).
+- [x] The opt-in test passes from the lab venv: parity under 1e-5 (0.0), the paired rule met (16/20, margin 2), the untrained control at most 20 % (0/10), and the greedy baseline more than 10 points below the protocol (45 % against 80 %).
+- [ ] CI passes with the opt-in test skipped and the toy test running (checked on the pull request).
+- [x] `docs/planning-protocol.md` can be followed by a reader without eb_jepa to implement an adapter, and by a reader with the lab to reproduce the numbers.
 
 ### Independent review
 
-- **Reviewer:** `reviewer` (Opus, high), fresh context, on the diff plus this plan
-- **Verdict:** Pending
-- **Findings:** Pending
-- [ ] Material findings resolved
-- [ ] Relevant verification rerun after fixes
+- **Reviewer:** `reviewer` (Opus, high), fresh context, on the diff plus this plan; two passes.
+- **Verdict:** Pass.
+- **Findings:** four Minor. (1) No test pinned the CEM to eb_jepa's: added a same-noise opt-in test (plans agree to 6e-7; a planted biased std fails it by 0.45). (2) The spec called the protocol the second tool; it is layer E and belongs to latent-plan, the third. (3) The spec lacked the native evaluation's machine and time, misdescribed the run folder and the normaliser, and the log overstated how often a native-favouring 2–0 split happens under equal planners. All fixed.
+- [x] Material findings resolved
+- [x] Relevant verification rerun after fixes
 
 ## Completion summary
 
-- **Delivered:** Pending
-- **Deviations from approved plan:** Pending
-- **Known risks / follow-up:** Pending
-- **Decision records updated:** Pending
-- **Lesson:** Pending
+- **Delivered:**
+  - eb_jepa's Two Rooms model trained on one RunPod L40S (12 epochs, about 1.6 h) and evaluated with eb_jepa's own CEM: 18 of 20 episodes (90%), against the README's 96 ± 2% averaged over seeds and checkpoints.
+  - A draft planning protocol (`src/jepa_scope/planning/`): the `WorldModel` protocol, `rollout`, `plan_cost` with a `"sum"` or `"last"` objective, a reference CEM that mirrors eb_jepa's, and an `eb_jepa` Two Rooms adapter; specified in `docs/planning-protocol.md`, with 17 toy tests in CI.
+  - Checked through the adapter on the laptop CPU (82 minutes): rollouts, costs and same-noise CEM plans match eb_jepa's; all 20 of eb_jepa's evaluation episodes replayed exactly; 16 of 20 solved through the protocol against 18 of 20 natively (native only: episodes 7 and 12; protocol only: none); greedy 45%; untrained 0 of 10. A protocol episode took 166 s against 805 s for eb_jepa's own CEM on the same CPU. Exploratory, outside the pass rule: episodes 7 and 12 succeed with two other planner seeds.
+  - RunPod spend: one pod, about 2.08 h at $0.79/h, about $1.65 of the $25 cap; deleted and confirmed.
+- **Deviations from approved plan:**
+  - The lead wrote T3 instead of an executor while training ran.
+  - `opencv-python-headless` on the pod; watchdogs as script files after a `pkill -f` matched its own SSH command; MPPI not run (optional).
+  - The replay check compares GIF first frames with the label masked rather than `state.pdf`.
+  - After a Fable architect review, the owner approved `encode(obs: Any)`, the planning-state wording, the objective option and deferring `latent(z)`.
+  - Added: the same-noise CEM test, and a fix for the build's random wheel-check failure.
+- **Known risks / follow-up:**
+  - 20 paired episodes cannot rule out a gap of about 10 points between the planners; under equal planners each disagreement is a coin flip, so a 2–0 split in either direction happens about half the time and one favouring the native planner a quarter of the time.
+  - The protocol has been checked against one model. V-JEPA 2-AC (planning state with token context and pose, final-frame L1, box-clipped actions) is the next test of its shape; `latent(z)` is to be decided when latent-plan is planned.
+  - The lab (`~/Workspace/eb_jepa-lab`, about 0.5 GB of checkpoints) stays outside the repository.
+- **Decision records updated:** `docs/decisions.md`, Method (the protocol's shape), Product (where the draft lives), Process (milestone order; cloud GPUs within an approved cap).
+- **Lesson:** cue: a remote shell command that both kills and starts a process by pattern / lesson: send remote helper scripts as files (`ssh host 'cat > x.sh'`) and kill by PID or session, never `pkill -f` on a pattern that also appears in the SSH command itself; this belongs in a RunPod or remote-compute skill if one is written / evidence: T2's first watchdog reset killed its own SSH session and the training launch with it / confidence: medium

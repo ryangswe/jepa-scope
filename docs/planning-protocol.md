@@ -2,8 +2,9 @@
 
 This document describes a small, model-agnostic interface for planning with a JEPA world model.
 A planner written against it can plan with any world model that implements three operations,
-whatever its architecture. The code is in `src/jepa_scope/planning/`. It is the second tool in
-the programme described in `docs/roadmap.md`. It is a draft: the signatures may change until the
+whatever its architecture. The code is in `src/jepa_scope/planning/`. The protocol is layer E of
+the toolchain described in `docs/roadmap.md` and belongs to latent-plan, the third of its tools;
+it is drafted here and moves there when that project starts. It is a draft: the signatures may change until the
 protocol has been checked against more than one model.
 
 ## What a world model implements
@@ -113,8 +114,8 @@ task, a dot must cross a wall through a door to reach a goal position, and the m
 two-channel 65 × 65 images. Its latent is a 512-dimensional vector and its actions are 2D
 displacements. The three operations map onto the model as follows.
 
-- `encode` applies eb_jepa's Two Rooms `Normalizer` (a per-image min-max scaling followed by
-  fixed per-channel statistics) to a raw `[B, 2, 65, 65]` observation, as `DotWall` renders it.
+- `encode` applies eb_jepa's Two Rooms `Normalizer` (a min-max scaling of each channel of each
+  image, followed by fixed per-channel statistics) to a raw `[B, 2, 65, 65]` observation, as `DotWall` renders it.
   It then runs the Impala encoder on the result as a one-frame clip and flattens its
   `[B, 512, 1, 1, 1]` output to `[B, 512]`.
 - `predict` runs one step of the GRU predictor, with the action as the input and the latent as
@@ -155,7 +156,8 @@ place of `opencv-python`.
 **eb_jepa Two Rooms, native planner.** The reference model was trained with eb_jepa's own
 `examples/ac_video_jepa` script at commit `966e61e` (random wall positions, seed 1, 12 epochs, on
 one NVIDIA L40S in about 1.6 hours). eb_jepa's own CEM evaluation (`planning_cem.yaml`, 20
-episodes of up to 200 steps) then succeeded in 18 of 20 episodes (90%). With 20 episodes, a
+episodes of up to 200 steps) then succeeded in 18 of 20 episodes (90%). The evaluation ran on the
+same GPU, at about 45 s per episode (921 s in all). With 20 episodes, a
 success rate near 90% has a standard error of about 7 points. eb_jepa's README reports 96 ± 2%
 for CEM, where each figure averages three training seeds and the last three checkpoints and
 ± 2 is their spread. One run and one checkpoint is noisier than that, so 90% is consistent with
@@ -172,7 +174,7 @@ described under Adapters (on a CUDA machine for training). Boolean overrides nee
 ```bash
 export EBJEPA_CKPTS=<checkpoint folder> WANDB_DISABLED=true
 python -m examples.ac_video_jepa.main --logging.log_wandb False --meta.enable_plan_eval False --meta.seed 1
-# <run> is the new folder under $EBJEPA_CKPTS/ac_video_jepa/
+# <run> is $EBJEPA_CKPTS/ac_video_jepa/dev_<date>/<experiment>_seed1, the folder holding latest.pth.tar
 cp <run>/config.yaml <run>/config.train.yaml   # the evaluation rewrites config.yaml
 python -m examples.ac_video_jepa.main --meta.model_folder <run> --meta.eval_only_mode True \
   --meta.enable_plan_eval True --eval.plan_cfg_path examples/ac_video_jepa/cfgs/planning_cem.yaml \
@@ -186,9 +188,14 @@ run on a laptop CPU (Apple M3 Max, float32). It took 82 minutes.
   eb_jepa's own `JEPA.unroll` exactly (maximum difference 0.0), and `plan_cost` matches eb_jepa's
   `ReprTargetDistMPCObjective` exactly. The reference is a separate `JEPA` loaded by eb_jepa's own
   checkpoint loader, so the check does not compare the adapter with itself.
+- **Same planner.** Given the same Gaussian noise, the reference CEM returns the same plan as
+  eb_jepa's `CEMPlanner` (maximum difference 6e-7 with a 25-step horizon, and 0.0 when the
+  horizon is cut to the steps left). A test that changed the elite update to a biased standard
+  deviation fails this check by 0.45, so it would catch the planner drifting from eb_jepa's.
 - **Same episodes.** The test rebuilds eb_jepa's evaluation environment and replays its 20
   episodes. Each replayed start frame matches the start frame eb_jepa saved for that episode.
-- **Planning.** The reference CEM, planning through the protocol with eb_jepa's settings,
+- **Planning.** The reference CEM, planning through the protocol with eb_jepa's settings in
+  float32 on the CPU, with its own random draws (eb_jepa's planner ran on the GPU with others),
   succeeded in 16 of the 20 episodes (80%), against 18 of 20 for eb_jepa's own planner. eb_jepa's
   planner alone succeeded in two episodes and the protocol's alone in none. The pass rule, fixed
   before the run, was a protocol rate of at least 70% and at most two more episodes solved only by
