@@ -5,6 +5,43 @@ Full rationale for this theme's decisions, newest first. The lean, auto-loaded i
 
 ---
 
+## 2026-11-05 — Milestones follow the roadmap's weekly order; Week 2's scope landed in Week 1, so Weeks 3 and 4 come next
+
+**Status:** live, indexed
+
+**Context.** After Week 1's scaffold, the next milestone was the owner's choice among the
+roadmap's candidates.
+
+**Decision.** Milestones follow the roadmap's planned weekly order, finishing a week's remaining
+steps before moving on. Week 2's scope (inference, the grid, the overlay, the file format and the
+CLI) landed in Week 1, so Weeks 3 and 4 come next.
+
+**Rejected.**
+- *Re-choosing the order at each milestone.* The weekly order already reflects the roadmap's
+  reasoning; changing it is a roadmap edit, not a per-milestone choice.
+
+---
+
+## 2026-11-05 — Cloud GPUs within the spending cap of an owner-approved plan need no further approval: log the price, run a watchdog, delete the pod
+
+**Status:** live, indexed
+
+**Context.** Training `eb_jepa`'s Two Rooms model on the laptop CPU projected to about 17 hours.
+The owner has a RunPod account with credit and said cloud GPUs are fine if the cost is not
+excessive.
+
+**Decision.** Paid compute outside an approved plan's spending cap stays owner-only. Within the
+cap, a session may create cloud GPUs without asking again, provided the GPU type and hourly
+price from a live read go in the plan's log before each pod is created, a watchdog stops the pod
+if the session is lost, and the pod is deleted when the job ends. `CLAUDE.md` carries the rule.
+The Week 1 plan's cap was $25; it spent about $1.65.
+
+**Rejected.**
+- *Asking before every pod.* The cap and the logging already bound the cost, and asking again
+  adds owner time for no control.
+
+---
+
 ## 2026-11-05 — Adopted the workflow kit at the full level, with its process files, the roadmap and this record published in the public repo
 
 **Status:** live, indexed

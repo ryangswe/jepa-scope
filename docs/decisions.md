@@ -27,17 +27,21 @@ anything the code already shows.
 
 ## Method · `docs/decisions/method.md`
 
+- 2026-11-06 — Planning protocol: a Markov planning state as one fixed-shape tensor, one-step stateless predict, model-owned energy, summed objective by default
 - 2026-11-05 — Surprise = mean L1 between predictor output and layer_norm(target), with the context frames encoded on their own; never the HF full-clip forward
 - 2026-11-05 — Windows of 16 frames at 8 fps, overlapping by half: context is the first half, every later tubelet is predicted exactly once
 - 2026-11-05 — Any output-changing edit bumps OUTPUT_VERSION, which keys the result cache
 
 ## Product & data · `docs/decisions/product.md`
 
+- 2026-11-06 — The planning protocol is drafted here (`src/jepa_scope/planning/`, `docs/planning-protocol.md`) and moves to latent-plan when that project starts
 - 2026-11-05 — Apache-2.0, public at ryangswe/jepa-scope; V-JEPA 2 weights are downloaded at run time, never redistributed
 - 2026-11-05 — `.latent` = safetensors plus a validated JSON header; the viewer refuses a video whose SHA-256 differs from the header
 - 2026-11-03 — jepa-scope is the first tool; the order of the other two is a proposal; tools target a model-agnostic protocol rather than V-JEPA 2
 
 ## Process & tooling · `docs/decisions/process.md`
 
+- 2026-11-05 — Cloud GPUs within the spending cap of an owner-approved plan need no further approval: log the price, run a watchdog, delete the pod
+- 2026-11-05 — Milestones follow the roadmap's weekly order; Week 2's scope landed in Week 1, so Weeks 3 and 4 come next
 - 2026-11-05 — Adopted the workflow kit at the full level, with its process files, the roadmap and this record published in the public repo
 - 2026-11-05 — CI installs uv.lock versions as constraints with CPU torch; the real-model test stays opt-in and runs locally

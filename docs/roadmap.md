@@ -1,7 +1,8 @@
 # Roadmap
 
 - **Written:** 2026-11-03, from the planning conversation that started this project.
-- **Last updated:** 2026-11-05, after the Week 1 scaffold and CI landed.
+- **Last updated:** 2026-11-06, after the `eb_jepa` Two Rooms run and the planning protocol draft
+  closed Week 1.
 - **Status:** living document. Executable milestone plans go in `docs/plans/`. Settled choices
   go in `docs/decisions.md`.
 
@@ -117,7 +118,10 @@ shaped like familiar model APIs, such as `POST /v1/video/embeddings` and
 This project is a planning runtime written against the protocol in layer E, with a browser UI. A
 user clicks a goal and watches CEM or MPPI sample action sequences, roll them out in latent space
 and converge on the energy landscape. The first adapter is an `eb_jepa` Two Rooms world model
-trained locally. The second is V-JEPA 2-AC, run offline on a rented GPU.
+trained locally. The second is V-JEPA 2-AC, run offline on a rented GPU. The protocol draft, a
+reference CEM planner and the `eb_jepa` Two Rooms adapter already exist in this repository
+(`src/jepa_scope/planning/`, specified in `docs/planning-protocol.md`) and move here when this
+project starts.
 
 - **Frontend leverage.** The energy over a two-dimensional slice of action space as an animated
   WebGL heatmap, sampled trajectories with the best ones highlighted, and the real rollout beside
@@ -149,7 +153,7 @@ of GPU time for `eb_jepa` runs.
 
 ## Progress
 
-### Week 1 (2026-11-03 to 2026-11-05)
+### Week 1 (2026-11-03 to 2026-11-06)
 
 | Step | Status |
 | --- | --- |
@@ -159,7 +163,7 @@ of GPU time for `eb_jepa` runs.
 | Surprise from masked prediction | Done. A cut in a spliced clip is detected; see below |
 | `.latent` format and CLI | Done |
 | Web viewer with overlay and timeline | Done |
-| Run the `eb_jepa` Two Rooms example and draft the planning protocol | **Not started** |
+| Run the `eb_jepa` Two Rooms example and draft the planning protocol | Done. Rollouts and same-noise plans match `eb_jepa`'s; in a closed-loop check `eb_jepa`'s planner solved 18 of 20 episodes and the protocol's 16; see `docs/planning-protocol.md` |
 | Publish under Apache-2.0 | Done: `ryangswe/jepa-scope`, with CI |
 
 The first local milestone was "open a clip on a MacBook without CUDA and see a PCA overlay and a
@@ -177,15 +181,20 @@ within each scene and rose to between 0.65 and 0.67 for the second after the cut
   showed nothing useful. Natural video with motion is the minimum for judging a signal.
 - **Expect a floor.** Surprise never reaches zero, and what carries information is the change
   relative to the clip's own floor.
+- **A wrapper that runs is not a wrapper that is right.** The `eb_jepa` adapter was trusted only
+  after its rollouts matched `eb_jepa`'s own to the last digit and, given the same random noise,
+  its planner returned `eb_jepa`'s plans. Closed-loop success on 20 episodes (16 against 18) was a
+  useful smoke test but could not show the two planners equal; an outside review pointed out that
+  the "paired" pass rule reduced to a net count. Controlled comparisons answer "is it the same
+  computation?"; small success-rate runs do not.
 
 ### Next
 
-Choosing the next milestone is the owner's call. These are the candidates:
+Milestones follow the weekly order. Week 2's scope landed in Week 1, so the next milestones are:
 
-1. The remaining Week 1 step: run the `eb_jepa` Two Rooms example and draft the planning protocol.
-2. jepa-scope Weeks 3 and 4: folder indexing, nearest-neighbour search and the latent
+1. jepa-scope Weeks 3 and 4: folder indexing, nearest-neighbour search and the latent
    trajectory view.
-3. jepa-scope Weeks 5 and 6: embedding health metrics, polish and a launch demo.
+2. jepa-scope Weeks 5 and 6: embedding health metrics, polish and a launch demo.
 
 Each milestone gets a plan in `docs/plans/` before code changes, written by the `planner` agent and
 approved by the owner.

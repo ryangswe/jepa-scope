@@ -13,6 +13,8 @@ Add a plan as soon as its file is committed (a Draft counts); remove it when its
 Done, Closed, Superseded or Shelved. Every other file here is a record. `.claude/workflow/check.py` fails when this list and a
 plan's `Status:` line disagree.
 
+None at the moment.
+
 ## Lifecycle
 
 - **Draft** while planning; reviewed by the owner before any code is touched.

@@ -137,20 +137,10 @@ def test_server_endpoints(latent, moving_square_video):
 
 def test_rotated_video_is_decoded_upright(tmp_path):
     """Phone clips carry a display matrix; frames must come out the way a player shows them."""
-    import shutil
-    import subprocess
-
-    if not shutil.which("ffmpeg"):
-        pytest.skip("needs the ffmpeg CLI to write rotation metadata")
     frames = np.zeros((16, 64, 96, 3), np.uint8)
     frames[:, :16, :16] = 255  # a white block in the top-left corner of the stored frame
-    plain = tmp_path / "plain.mp4"
-    write_video(plain, frames)
     rotated = tmp_path / "rotated.mp4"
-    subprocess.run(
-        ["ffmpeg", "-v", "error", "-y", "-display_rotation", "90", "-i", str(plain), "-c", "copy", str(rotated)],
-        check=True,
-    )
+    write_video(rotated, frames, rotation=90)
     v = decode(rotated, sample_fps=8)
     assert v.rotation == 90
     assert (v.width, v.height) == (64, 96)

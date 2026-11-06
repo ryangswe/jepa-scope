@@ -9,7 +9,10 @@ cd "$(dirname "$0")/.."
 uv build
 
 wheel=$(ls -t dist/*.whl | head -1)
-if ! unzip -l "$wheel" | grep -q "jepa_scope/static/index.html"; then
+# Read the listing first: piping unzip into `grep -q` fails at random under pipefail, because grep
+# exits at the first match and unzip then dies writing to the closed pipe.
+listing=$(unzip -l "$wheel")
+if ! grep -q "jepa_scope/static/index.html" <<<"$listing"; then
   echo "error: $wheel does not contain the built viewer" >&2
   exit 1
 fi
