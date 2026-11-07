@@ -161,6 +161,9 @@ implementation detail out of it.
 - **Deviations from approved plan:** None | <summary>
 - **Known risks / follow-up:** None | <summary>
 - **Decision records updated:** None | `docs/decisions.md` entries
+- **Missed by:** n/a | <one line per bug this plan fixed that was already on the default branch:
+  the check that should have caught it, and the test, rule or review line this plan added; copy
+  each line into the PR description>
 - **Lesson:** NO_ENTRY | cue: <the shape of situation, not this plan's facts> / lesson: <what to
   do differently, naming where it would live: CLAUDE.md, an agent file, a skill, a hook or a
   test> / evidence: <the moment in this plan that shows it> / confidence: <high, medium or low>

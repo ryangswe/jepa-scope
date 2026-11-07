@@ -2,17 +2,20 @@
   "excluded": [],
   "files": {
     ".claude/agents/architect.md": "48fe7a09c04c46670265be39dab3c2f1152f84ee8e36875f0c7aabd99db91631",
-    ".claude/agents/executor.md": "2751d168f860ebb595301f4c08f8a7b2a303b64f3781716d516b35f8fc282cc9",
+    ".claude/agents/executor.md": "06765095210290ade870df7d5d20eda1138e427be3023f4656784e0863708c92",
     ".claude/agents/explore.md": "5ad8a5c9ea6d6975e572c0faaff6db9bc1345393eb1cce23392be2c3fc7c6693",
-    ".claude/agents/planner.md": "9b96c1c3be5cd8b220502ae437a14dc9e0c6c8e7b74ad01ecb386d323025f0c9",
-    ".claude/agents/reviewer.md": "d79012452a4a177372e58b30ce86df7a7db23dc162b8e43cbfdc4a33c9fe61be",
-    ".claude/hooks/guard-default-branch.py": "694d4a65cced3879ee6e125a6d039d60c572a8c7e6b205654d19dc4f7f03aba2",
+    ".claude/agents/planner.md": "229e070a31315ed476658d754712a6d065535933e7aae878dbbf4de28d0891af",
+    ".claude/agents/reviewer.md": "f04f1e4d823724f21c977fd87ec35e4cfc74c9bac9344a0f14c526907de57e4d",
+    ".claude/hooks/guard-default-branch.py": "8788b877187d802eb87d316d47ae0bb43ebb67782bb1d4f55bd24b643a1b2fc9",
+    ".claude/review-checklists.md": "fbbcfa915376edcf21d7ba990c96c558a9795fd8a874b9f72f57ff15c52d04f1",
     ".claude/skills/checkpoint/SKILL.md": "e773f095fca977e9872d0b7c13cc7918b065443de8095896d0097aeb07c1e739",
-    ".claude/skills/handoff/SKILL.md": "a1710e7a140476f138537e7d0080e01e98fe3702f61a4ec2f9eae19ecea75e59",
-    ".claude/skills/parallel-work/SKILL.md": "da50f448eef1afb036b2df00a437236995e693b063931641016628692fc012eb",
+    ".claude/skills/gc/SKILL.md": "abfb7282d3000eb30b872df8313a17aa2c60a54e5951034c0bdfaa3da59bde71",
+    ".claude/skills/handoff/SKILL.md": "1289ffc479b7761066212b576d1a22c8c134e3aeed7bff5945642acc439a3eab",
+    ".claude/skills/parallel-work/SKILL.md": "94fbb922cf88fc005fd8cfa033c1c3559adbfde04fd759ca5f3c696f2afd9afe",
     ".claude/workflow/check.py": "c3e23ff58df8e13365d69c85a5a54d1bfbc9557f08d745e426426715e09d6220",
-    "docs/plans/_template.md": "88964018a9ae3f890d005940663373d78ad062c50b92dd2f2d80bb28b5f3b259"
+    ".claude/workflow/gc.py": "30b0191f1171a1fe9d5f6bf10579a8eaa8a06db49da9a8437376df5bebb70af4",
+    "docs/plans/_template.md": "9178c6a0a9807241ecd8d5624f9e07f94f6b5181e4a2290f44fd49f0c8b08d3f"
   },
-  "kit": "a622a54 2026-10-24",
+  "kit": "c9485b3 2026-11-06",
   "level": "full"
 }

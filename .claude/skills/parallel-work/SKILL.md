@@ -23,6 +23,10 @@ description: Rules for concurrent work — worktrees for code-writing workers th
   not just for file overlap.
 - Stage explicit paths. Never `git add .` or a whole directory in the main checkout; untracked
   drafts get swept in.
+- **A lead started outside the repository folder** (for example in a parent workspace folder)
+  does not get the repository's `.claude/agents` types: `planner`, `executor` and `reviewer`
+  are "not found". Dispatch `general-purpose` (or `Plan` for read-only planning), set the model
+  the agent file names, and make the brief's first line "read `.claude/agents/<name>.md` first".
 
 ## Parallel lead sessions
 
