@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: End a session so a fresh one can pick the work up — record where things stand in the repository (the plan, decisions, a commit), push, and print a short starting prompt that points there. Use when the owner asks for a handoff, is stopping for the day mid-task, is switching topic, or the session has grown long (around 300–400k tokens).
+description: End a session so a fresh one can pick the work up — record where things stand in the repository (the plan, decisions, a commit), push, and print a short starting prompt that points there. Use when the owner asks for a handoff, is stopping for the day mid-task, is switching topic, or the session has grown long (around 300–400k tokens) or a context-size warning shows.
 argument-hint: "What will the next session be used for?"
 ---
 
@@ -11,6 +11,13 @@ with a cloud sandbox and never reaches another machine, and a summary that resta
 drifts from it. So write state where the next session will look anyway, then print a few lines
 that send it there. If the owner passed an argument, it says what the next session is for:
 shape steps 3 and 5 around that.
+
+**Hand off while the cache is warm.** The prompt cache expires after a short idle. The first
+message into a cold session writes its whole context back into the cache, which costs more than
+reading it: at 400k tokens one cold message costs about as much as ten to twenty warm ones. So
+hand off at the end of the day's last exchange, not at the start of the next, and start the next
+day in a fresh session that reads only what it needs. If the environment warns about context
+size, offer this skill at the next natural break.
 
 1. **Find where the work lives.** The current branch (never the default branch: if you are on it
    with changes, create a branch first), and the plan for this work if there is one: the dated
@@ -31,19 +38,28 @@ shape steps 3 and 5 around that.
    - **With a plan:** update its `Status:` line, tick finished tasks, and add one log entry: what
      was done, what was learned, and the **next step** as one concrete action (a command, a file
      and function, a question to settle). Keep the active list in `docs/plans/README.md` in step.
+   - **A lead session spanning several plans:** keep one handoff file,
+     `docs/plans/YYYY-MM-DD-<role>-handoff.md`, with `- **Status:** Closed (a record: a handoff,
+     not a plan to execute)` in its header. It points at each plan's state and holds only what no
+     plan holds: threads waiting on the owner, what is in flight, pending decisions with a
+     recommendation, and the hard rules a successor must not relearn. Delete the role's previous
+     handoff file in the same commit, so exactly one is current.
    - **Without a plan:** the commit message carries the state. Its body says what is done, what
      is not, and the next step.
 
 4. **Commit and push.** Stage explicit paths, never `git add .`. Work in progress is fine to
    commit on a feature branch; say so in the subject (`wip: …`). If nothing changed but the state
    is only in your head, an empty commit (`git commit --allow-empty`) holding the step 3 text is
-   better than losing it. Push the branch. If you cannot push, say so plainly: the next session
-   will not see unpushed work, and the prompt must say where it is.
+   better than losing it. Push the branch; for a lead's handoff file, open a small docs PR. If you
+   cannot push, say so plainly: the next session will not see unpushed work, and the prompt must
+   say where it is.
 
 5. **Print the starting prompt** in one code block, at most ten lines, for the owner to paste into
    a new session:
    - repository and branch;
-   - where to read: the plan and its section, or the handoff commit by its short hash;
+   - the model and effort the role runs on, if `CLAUDE.md` names one (its model routing);
+   - where to read: the plan and its section, the role's handoff file, or the handoff commit by
+     its short hash;
    - the next step, in one line;
    - anything waiting on the owner, and anything left running;
    - which skills to load, by name, if the next step needs them.
@@ -52,6 +68,23 @@ shape steps 3 and 5 around that.
    personal data, even if they appeared in the session.
 
 6. **Finish with one line:** what was committed and pushed, or what could not be.
+
+## Before stepping away
+
+- **Nothing should wake a large, idle session.** A background agent or command that finishes
+  after the owner has left wakes its session with a cold cache, and nothing can stop that. Work
+  meant to finish while nobody is watching writes its result to a file or a commit and runs as
+  its own session or a plain background process; the next session reads the file. Name the file
+  in the handoff. (A session deliberately left to run unattended is different: see the kit's
+  `docs/workflow.md`.)
+- If such work is already running from this session, say so in the prompt, and tell the owner
+  its finish notice will cost one cold turn here; the next session should still start fresh.
+
+## Keep it cheap to retire
+
+A session whose plans are current can be retired at any moment. Keep plan `Status:` lines and
+logs current at each closeout (`CLAUDE.md` "Close out"), not only at handoff, so the final
+handoff is a small edit made while the cache is warm.
 
 Do not hand off what needs no handoff. If the work is finished and merged, or nothing is in
 flight, say so: the plan and the history already show where things stand.

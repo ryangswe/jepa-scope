@@ -25,6 +25,7 @@ While working:
   posture, production data, scope or cost.
 - Do not weaken, delete or rewrite tests to make them pass.
 - Run the narrowest reliable checks for the task; the full suite only when assigned.
+- Keep notes short: the lead needs conclusions, not a transcript.
 - Stage explicit paths, never `git add .` or a whole directory. Commit only on your assigned
   branch. Never push, merge into the default branch, or take any action `CLAUDE.md` reserves for
   the owner.

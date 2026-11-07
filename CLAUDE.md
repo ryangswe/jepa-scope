@@ -34,11 +34,17 @@ timeline. It is the first of three planned tools; the programme is in `docs/road
 ## Working agreements
 
 - **Never change files on the default branch** (`main`/`master`). Branch first
-  (`git checkout -b <slug>`). `.claude/hooks/guard-default-branch.py` blocks Edit/Write there as
-  a backstop, but cannot see shell writes (`sed -i`, `>>`).
+  (`git checkout -b <slug>`). `.claude/hooks/guard-default-branch.py` blocks edits, `git commit`
+  and pushes to it as a backstop, but does not judge other shell writes (`sed -i`, `>>`).
 - Record decisions a later session could plausibly reopen (direction, architecture, contracts,
   security, rejected alternatives): one line in the auto-loaded index @docs/decisions.md and the
   full entry in its `docs/decisions/<theme>.md`. The index header sets the format and budget.
+- **Size the task first, and say which lane in one line.** A *small change* (a few files, easy to
+  revert, and no change to a shared contract, security or privacy posture, or product behaviour)
+  takes the short lane: branch, change, `/checkpoint`, one `reviewer` pass, then a pull request
+  whose description ends with a `Decision:` line if one was made. No plan, no decisions-record
+  entry, no closeout. Anything bigger, or a small change that grows, takes the full process.
+  A `Decision:` line is promoted to the decisions record only if a later session could reopen it.
 - For large milestones, write the plan to `docs/plans/YYYY-MM-DD-<slug>.md` from
   `docs/plans/_template.md`, so a fresh session can execute it from the file alone. Keep its
   `Status:` line and the active list in `docs/plans/README.md` current.
@@ -131,6 +137,8 @@ Fable. Update the mapping when models change.
 - Ending a session mid-task, switching topic, or past ~300–400k tokens: run `/handoff` (the
   `handoff` skill). It records state in the repository and prints a short prompt for the next
   session. Don't let a conversation be the only place work's state lives.
+- Weekly, at a handoff, or when `.claude/worktrees/` piles up: run `/gc` (the `gc` skill) to remove
+  worktrees and branches whose work is already in the default branch.
 - **Close out:** the plan's `Status:` line and the active list; the execution log compressed into
   the completion summary with its lesson or `NO_ENTRY`; decision lines that meet the index bar; a
   short summary for the owner.

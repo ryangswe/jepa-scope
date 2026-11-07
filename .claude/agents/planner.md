@@ -28,7 +28,8 @@ Follow `docs/plans/_template.md`. At minimum:
 2. **Alternatives considered**: at least one, and why it lost. Flag decisions that meet the bar
    for a decision record.
 3. **Risks and open questions**: anything that needs the owner's decision before work starts.
-   Ask; don't assume.
+   Ask; don't assume. Get the scope boundary right: call out anything the request would have you
+   build ahead of where it belongs.
 4. **Tasks**: small, separately verifiable units in order, each with files, dependencies,
    complexity class (ROUTINE / STRONG / FRONTIER), success criteria, verification, escalation
    conditions, and the owner's hours it needs (reviews, live checks, labelling, decisions).
