@@ -70,6 +70,7 @@ def make_index(counts=WINDOWS_PER_CLIP, dim: int = DIM, similarity: str = "cosin
         "run": {"max_seconds": 30.0, "device": "cpu", "dtype": "float32"},
         "embedding": {"kind": "window_vector", "similarity": similarity},
         "root": ".",
+        "recursive": True,
         "skipped": [{"path": "bad.mp4", "reason": "could not decode"}],
         "clips": clips,
     }
@@ -310,6 +311,14 @@ def test_rejects_missing_header_key(key):
         index_file.check(tensors, header)
 
 
+def test_rejects_a_header_without_recursive():
+    """Named on its own, since the parametrised test above follows REQUIRED_HEADER_KEYS."""
+    tensors, header = make_index()
+    del header["recursive"]
+    with pytest.raises(IndexFileError, match="missing"):
+        index_file.check(tensors, header)
+
+
 def test_rejects_representation_with_wrong_hash():
     tensors, header = make_index()
     header["representation"]["pooling"] = "max"
@@ -439,6 +448,8 @@ BAD_HEADER_FIELDS = [
     pytest.param(set_top("root", ""), "root must be", id="root-empty"),
     pytest.param(set_top("root", 5), "root must be", id="root-not-a-string"),
     pytest.param(set_top("format_version", True), "format_version", id="format-version-bool"),
+    pytest.param(set_top("recursive", 1), "recursive must be", id="recursive-int"),
+    pytest.param(set_top("recursive", None), "recursive must be", id="recursive-null"),
     pytest.param(set_top("skipped", "x"), "skipped must be", id="skipped-not-a-list"),
     pytest.param(set_top("skipped", {}), "skipped must be", id="skipped-empty-object"),
     pytest.param(set_top("skipped", [1, "x"]), "skipped must be", id="skipped-not-objects"),

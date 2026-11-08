@@ -57,15 +57,36 @@ class EmbedSettings:
 
     @classmethod
     def from_args(cls, args: Any) -> EmbedSettings:
-        """Settings from parsed command line arguments (``--model``, ``--fps`` and so on)."""
+        """Settings from parsed command line arguments (``--model``, ``--fps`` and so on).
+
+        A ``--model`` that names an existing local folder becomes its absolute path, which is the
+        ``model_id`` the representation block records, so settings rebuilt from an index header
+        (``from_index``) give the same cache key. A Hugging Face id is kept as it is.
+        """
+        model = str(Path(args.model).resolve()) if Path(args.model).is_dir() else args.model
         return cls(
-            model=args.model,
+            model=model,
             fps=args.fps,
             window=args.window,
             batch=args.batch,
             max_seconds=args.max_seconds,
             device=args.device,
             dtype=args.dtype,
+        )
+
+    @classmethod
+    def from_index(cls, header: dict[str, Any]) -> EmbedSettings:
+        """The settings an index was built with, from its validated header: the model, window and
+        sampling rate of its representation block and its run settings. ``batch`` is the default,
+        since it does not change the output."""
+        rep, run = header["representation"], header["run"]
+        return cls(
+            model=rep["model_id"],
+            fps=rep["window"]["sample_fps"],
+            window=rep["window"]["frames"],
+            max_seconds=run["max_seconds"],
+            device=run["device"],
+            dtype=run["dtype"],
         )
 
     def _resolve(self) -> tuple[torch.device, torch.dtype]:
@@ -169,3 +190,32 @@ def cache_is_valid(path: Path, expected_representation: str, log: Callable[[str]
         log(f"re-embedding: the cache file {path.name} holds a different representation")
         return False
     return True
+
+
+def find_cache_file(
+    video_sha256: str,
+    settings: EmbedSettings,
+    expected_hash: str,
+    cache_dir: Path | None = None,
+    log: Callable[[str], None] = _print,
+) -> Path | None:
+    """A reusable cache file for this video and these settings, or None.
+
+    The file with the ``patches`` tensor is tried first, then the one without. A file is reusable
+    when ``cache_is_valid`` accepts it and its header's ``source.sha256`` is the full
+    ``video_sha256`` (the cache name only carries a 16-character prefix of it).
+    """
+    for patches in (True, False):
+        path = cache_path(video_sha256, settings, patches, cache_dir)
+        if not cache_is_valid(path, expected_hash, log):
+            continue
+        try:
+            source = latent_file.read_header(path)["source"]
+        except (latent_file.LatentFileError, OSError, ValueError) as exc:
+            log(f"re-embedding: the cache file {path.name} cannot be used ({exc})")
+            continue
+        if source.get("sha256") != video_sha256:
+            log(f"re-embedding: the cache file {path.name} belongs to another video")
+            continue
+        return path
+    return None

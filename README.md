@@ -170,16 +170,25 @@ not load the model. `--verify` hashes every video whatever its size and time say
 file replaced by another of the same size and time. If the model, the embedding settings, the
 device or the dtype change, the index is rebuilt from scratch, and the program says why.
 
-One bad file does not stop a run. A video that is too short for one window, has fewer frames per
-second than `--fps`, has no video stream, cannot be decoded, or makes the model produce invalid
-values is reported, skipped and listed in the index with the reason. It is not tried again until it
-changes or `--verify` is given.
+The index remembers two choices. `--recursive` and `--centre` (see below) stay in effect on later
+runs until `--no-recursive` or `--no-centre` turns them off, even when the index is rebuilt. Turning
+`--recursive` off drops the clips in subfolders from the index, and turning it on again adds them
+back from the cache.
 
-`jepa-scope search` takes the folder (or the index file) and a query. A query that is one of the
-indexed clips, given by its path inside the folder or by a path to the file, is searched with the
-vectors already in the index. Any other video is embedded through the cache with the model and
-settings the index was built with, and it is refused if this machine's model files would produce a
-different representation. By default the results are the moments in other clips most like the
+One bad file does not stop a run. A video that cannot be read, is too short for one window, has
+fewer frames per second than `--fps`, has no video stream, cannot be decoded, runs out of memory or
+makes the model produce invalid values is reported, skipped and listed in the index with the
+reason. When the cause is the file's content (too short, too few frames per second, no video
+stream, not decodable), the file is not tried again until it changes, `--verify` is given or
+jepa-scope is upgraded. Any other failure is tried again on the next run.
+
+`jepa-scope search` takes the folder (or the index file) and a query. A query that is a path to
+one of the indexed clips is searched with the vectors already in the index, and so is a file with
+the same contents as an indexed clip, which the output then says. If the query is not an existing
+file, it is looked up as a clip's path inside the folder (`sub/clip.mp4`). Any other video is
+embedded through the cache with the model and settings the index was built with. It is refused if
+this machine's model files would produce a different representation, or if the device the index
+was built on is not available here. By default the results are the moments in other clips most like the
 window at `--at` seconds, with overlapping windows of one clip collapsed to the best one;
 `--same-clip` also lists moments from the query's own clip, and `--by clip` compares whole clips. Each
 window is two seconds long at the defaults and a new one starts every second. Similarity is plain

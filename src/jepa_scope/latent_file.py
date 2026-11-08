@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -105,10 +106,25 @@ def save(path: str | Path, tensors: dict[str, np.ndarray], header: dict[str, Any
     header = {**header, "format": FORMAT, "format_version": FORMAT_VERSION}
     _check_header(header)
     contiguous = {k: np.ascontiguousarray(v) for k, v in tensors.items()}
-    # Write next to the target and rename, so an interrupted write never leaves a half file behind.
-    tmp = Path(path).with_name(Path(path).name + ".tmp")
-    save_file(contiguous, str(tmp), metadata={META_KEY: json.dumps(header, sort_keys=True)})
-    os.replace(tmp, path)
+    # Write to a uniquely named file in the target's directory and rename it, so an interrupted
+    # write never leaves a half file behind and two processes embedding the same video never share
+    # a temporary name. The temporary file gets the permissions an ordinary new file would
+    # (mkstemp creates it private).
+    fd, tmp = tempfile.mkstemp(dir=Path(path).absolute().parent, prefix=Path(path).name + ".", suffix=".tmp")
+    os.close(fd)
+    try:
+        save_file(contiguous, tmp, metadata={META_KEY: json.dumps(header, sort_keys=True)})
+        os.chmod(tmp, 0o666 & ~_umask())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def _umask() -> int:
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
 
 
 def read_header(path: str | Path) -> dict[str, Any]:

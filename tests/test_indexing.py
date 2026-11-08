@@ -386,7 +386,7 @@ def test_changing_only_centre_rewrites_the_similarity(folder, run, embeds):
     index = index_file.load(folder / indexing.INDEX_NAME)
     assert index.header["embedding"]["similarity"] == "centred-cosine"
     assert embeds == [] and report.rebuilt is None and report.hashed == 0
-    run(folder)
+    run(folder, centre=False)
     assert index_file.load(folder / indexing.INDEX_NAME).header["embedding"]["similarity"] == "cosine"
 
 
@@ -516,6 +516,138 @@ def test_out_in_a_subfolder_records_an_absolute_root(folder, run):
     assert index_file.load(out).header["root"] == str(folder.resolve())
 
 
+@pytest.mark.parametrize(
+    "error",
+    [RuntimeError("MPS backend out of memory"), MemoryError(), OSError(5, "Input/output error")],
+    ids=["runtime", "memory", "os"],
+)
+def test_a_transient_failure_is_retried_next_run(folder, run, embeds, monkeypatch, error):
+    real = indexing.embed_video
+
+    def failing_grey(video, *args, **kwargs):
+        if Path(video).name == GREY:
+            raise error
+        return real(video, *args, **kwargs)
+
+    monkeypatch.setattr(indexing, "embed_video", failing_grey)
+    report = run(folder)
+    grey = next(s for s in report.skipped if s["path"] == GREY)
+    assert set(grey) == {"path", "reason"}  # listed, not remembered
+    monkeypatch.setattr(indexing, "embed_video", real)
+    embeds.clear()
+    report = run(folder)
+    assert GREY in [c["path"] for c in index_file.load(folder / indexing.INDEX_NAME).header["clips"]]
+    assert report.embedded == 1
+
+
+def test_a_content_failure_is_remembered_with_the_version(folder, run, embeds, monkeypatch):
+    report = run(folder)
+    short = next(s for s in report.skipped if s["path"] == SHORT)
+    assert {"sha256", "size", "mtime_ns", "jepa_scope"} <= set(short) and short["jepa_scope"] == indexing.__version__
+    embeds.clear()
+    run(folder)
+    assert embeds == []
+    monkeypatch.setattr(indexing, "__version__", "99.0.0")
+    run(folder)
+    assert embeds == [SHORT]  # another jepa-scope version tries again
+
+
+def test_two_identical_failing_files_are_tried_once(folder, run, embeds):
+    shutil.copyfile(folder / SHORT, folder / "short-copy.mp4")
+    report = run(folder)
+    assert embeds.count(SHORT) + embeds.count("short-copy.mp4") == 1
+    reasons = {s["path"]: s["reason"] for s in report.skipped}
+    assert reasons[SHORT] == reasons["short-copy.mp4"]
+
+
+def test_a_provider_that_misdescribes_the_encoder_stops_the_run(folder, run, tiny_encoder, cache_dir):
+    class Misdescribed(TinyModel):
+        def representation(self):
+            return _other_weights(self.enc).representation(self.settings.window, self.settings.fps)
+
+    with pytest.raises(RuntimeError, match="does not match the one its description gave"):
+        run(folder, model=Misdescribed(tiny_encoder))
+    assert not cache_dir.exists() or not list(cache_dir.glob("*.latent"))
+    assert not (folder / indexing.INDEX_NAME).exists()
+
+
+def test_a_file_that_changes_while_embedding_is_skipped(folder, run, monkeypatch):
+    real = indexing.embed_video
+
+    def changed(video, *args, **kwargs):
+        tensors, header = real(video, *args, **kwargs)
+        if Path(video).name == GREY:
+            header = {**header, "source": {**header["source"], "sha256": "f" * 64}}
+        return tensors, header
+
+    monkeypatch.setattr(indexing, "embed_video", changed)
+    report = run(folder)
+    grey = next(s for s in report.skipped if s["path"] == GREY)
+    assert grey == {"path": GREY, "reason": "the file changed while it was being indexed"}
+
+
+def test_centre_and_recursive_are_remembered(folder, run, embeds, template):
+    (folder / "sub").mkdir()
+    shutil.copyfile(template / GREY, folder / "sub" / "deep.mp4")
+    report = run(folder)
+    index = index_file.load(folder / indexing.INDEX_NAME)
+    assert index.header["recursive"] is False and "sub/deep.mp4" not in [c["path"] for c in index.header["clips"]]
+    assert sum(line.startswith("similarity: ") for line in run.lines) == 1
+
+    run(folder, centre=True, recursive=True)
+    run(folder)
+    index = index_file.load(folder / indexing.INDEX_NAME)
+    assert index.header["embedding"]["similarity"] == "centred-cosine" and index.header["recursive"] is True
+    assert "sub/deep.mp4" in [c["path"] for c in index.header["clips"]]
+    assert [line for line in run.lines if line.startswith("similarity: ")][-1] == (
+        "similarity: centred-cosine; subfolders: included"
+    )
+
+    # A rebuild from scratch keeps them too.
+    report = run(folder, settings=dataclasses.replace(SETTINGS, max_seconds=2.5))
+    index = index_file.load(folder / indexing.INDEX_NAME)
+    assert report.rebuilt is not None and report.centre and report.recursive
+    assert index.header["embedding"]["similarity"] == "centred-cosine" and index.header["recursive"] is True
+
+    embeds.clear()
+    run(folder, settings=dataclasses.replace(SETTINGS, max_seconds=2.5), recursive=False)
+    assert "sub/deep.mp4" not in [c["path"] for c in index_file.load(folder / indexing.INDEX_NAME).header["clips"]]
+    run(folder, settings=dataclasses.replace(SETTINGS, max_seconds=2.5), recursive=True)
+    assert "sub/deep.mp4" in [c["path"] for c in index_file.load(folder / indexing.INDEX_NAME).header["clips"]]
+    assert embeds == []  # the cache holds the subfolder clip, and the short clip is remembered
+
+
+def test_settings_from_an_index_give_the_indexer_s_cache_path(folder, run, cache_dir):
+    run(folder)
+    index = index_file.load(folder / indexing.INDEX_NAME)
+    sha = _entry(index, SQUARE)["sha256"]
+    from_index = EmbedSettings.from_index(index.header)
+    assert cache.cache_path(sha, from_index, False, cache_dir) == cache.cache_path(sha, SETTINGS, False, cache_dir)
+    assert cache.cache_path(sha, from_index, False, cache_dir).exists()
+    assert cache.find_cache_file(sha, from_index, index.header["representation"]["hash"], cache_dir) is not None
+
+
+def test_from_args_makes_a_local_model_folder_absolute(tmp_path, monkeypatch):
+    import argparse
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "my-model").mkdir()
+    base = dict(fps=8.0, window=16, batch=2, max_seconds=None, device=None, dtype=None)
+    local = EmbedSettings.from_args(argparse.Namespace(model="my-model", **base))
+    assert local.model == str((tmp_path / "my-model").resolve())
+    hub = EmbedSettings.from_args(argparse.Namespace(model="facebook/vjepa2-vitl-fpc64-256", **base))
+    assert hub.model == "facebook/vjepa2-vitl-fpc64-256"
+
+
+def test_a_symlinked_index_beside_the_videos_records_dot(folder, run, tmp_path):
+    real = tmp_path / "real.index"
+    run(folder, out=real)
+    (folder / indexing.INDEX_NAME).symlink_to(real)
+    report = run(folder)
+    assert report.rebuilt is None
+    assert index_file.load(folder / indexing.INDEX_NAME).header["root"] == "."
+
+
 # ----------------------------------------------------------------------------------------------
 # The command line
 
@@ -561,22 +693,68 @@ def test_cli_index_then_search_a_clip(folder, patched_cli, capsys, monkeypatch, 
 def test_cli_search_with_an_outside_video(folder, patched_cli, capsys, tmp_path, tiny_encoder):
     cli.main(["index", str(folder), *EMBED_ARGS])
     capsys.readouterr()
-    query = tmp_path / "query.mp4"
-    shutil.copyfile(folder / SQUARE, query)  # same bytes, so the cache already holds it
-    assert cli.main(["search", str(folder), str(query), "--by", "clip", "-k", "2"]) == 0
+    fresh = tmp_path / "fresh.mp4"
+    write_video(fresh, np.full((48, 64, 96, 3), 90, np.uint8))
+    assert cli.main(["search", str(folder), str(fresh), "--at", "0.5"]) == 0
     lines = capsys.readouterr().out.splitlines()
-    assert lines[0] == f"clips like {query}:"
-    assert {lines[2].split()[3], lines[3].split()[3]} == {SQUARE, COPY}
-    assert abs(float(lines[2].split()[1]) - 1.0) < 1e-4
+    assert lines[0].startswith(f"moments like {fresh} at 0.5s (window 0")
+    assert len(lines) == 2 + 9  # windows 0, 2 and 4 of each clip are the non-overlapping ones
     # The query was embedded with the index's own settings.
     assert patched_cli[-1].settings == EmbedSettings(
         model="test/tiny-vjepa2", fps=8.0, window=8, device="cpu", dtype="float32"
     )
+    # A second search finds it in the cache.
+    assert cli.main(["search", str(folder), str(fresh), "--by", "clip"]) == 0
+    assert capsys.readouterr().out.startswith(f"clips like {fresh}:")
 
+
+def test_cli_search_with_a_file_holding_an_indexed_clip(folder, patched_cli, capsys, tmp_path):
+    """A file outside the folder with the same bytes as an indexed clip is searched as that clip."""
+    cli.main(["index", str(folder), *EMBED_ARGS])
+    capsys.readouterr()
+    query = tmp_path / "query.mp4"
+    shutil.copyfile(folder / SQUARE, query)
+    assert cli.main(["search", str(folder), str(query), "--by", "clip", "-k", "2"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == f"{query} has the same contents as the indexed clip {COPY}; searching as that clip"
+    assert lines[1] == f"clips like {COPY}:"
+    assert lines[3].split()[3] == SQUARE and abs(float(lines[3].split()[1]) - 1.0) < 1e-4
+    assert len(lines) == 3 + 2  # the clip it stands for is excluded
+
+
+def test_cli_search_prefers_an_existing_file_to_a_clip_name(folder, patched_cli, capsys, tmp_path, monkeypatch):
+    """A file in the working directory named like an indexed clip is that file, not the clip."""
+    cli.main(["index", str(folder), *EMBED_ARGS])
+    capsys.readouterr()
+    elsewhere = tmp_path / "cwd"
+    elsewhere.mkdir()
+    shutil.copyfile(folder / GREY, elsewhere / SQUARE)
+    monkeypatch.chdir(elsewhere)
+    assert cli.main(["search", str(folder), SQUARE, "--by", "clip"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith(f"{SQUARE} has the same contents as the indexed clip {GREY}")
+
+
+def test_cli_search_by_a_symlinked_indexed_clip(folder, patched_cli, capsys, template):
+    """A symlink in the folder is the clip of its own name, not of the file it points to."""
+    (folder / "link.mp4").symlink_to(template / SQUARE)
+    cli.main(["index", str(folder), *EMBED_ARGS])
+    capsys.readouterr()
+    assert cli.main(["search", str(folder), str(folder / "link.mp4"), "-k", "1"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("moments like link.mp4 at 0s"), out
+
+
+def test_cli_search_needs_the_index_device_to_embed_a_query(folder, patched_cli, monkeypatch, tmp_path):
+    import torch
+
+    cli.main(["index", str(folder), *EMBED_ARGS[:-4], "--device", "mps", "--dtype", "float16"])
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
     fresh = tmp_path / "fresh.mp4"
     write_video(fresh, np.full((48, 64, 96, 3), 90, np.uint8))
-    assert cli.main(["search", str(folder), str(fresh), "--at", "0.5"]) == 0
-    assert capsys.readouterr().out.startswith(f"moments like {fresh} at 0.5s (window 0")
+    with pytest.raises(SystemExit, match=r"needs the mps device \(float16\), which is not available here"):
+        cli.main(["search", str(folder), str(fresh)])
+    assert cli.main(["search", str(folder), SQUARE, "-k", "1"]) == 0  # an indexed clip still works
 
 
 def test_cli_search_refuses_a_query_from_another_representation(
@@ -584,7 +762,7 @@ def test_cli_search_refuses_a_query_from_another_representation(
 ):
     cli.main(["index", str(folder), *EMBED_ARGS])
     query = tmp_path / "query.mp4"
-    shutil.copyfile(folder / GREY, query)
+    write_video(query, np.full((48, 64, 96, 3), 90, np.uint8))
     monkeypatch.setattr(cli, "_model_provider", lambda settings: TinyModel(_other_weights(tiny_encoder), settings))
     with pytest.raises(SystemExit, match="cannot be embedded the way this index was"):
         cli.main(["search", str(folder), str(query)])
@@ -628,6 +806,16 @@ def test_cli_search_errors(folder, patched_cli, capsys, tmp_path):
         cli.main(["search", str(folder), SQUARE, "-k", "0"])
     with pytest.raises(SystemExit, match="cannot be embedded: the video gives"):
         cli.main(["search", str(folder), str(folder / SHORT)])
+
+
+def test_cli_centre_and_recursive_flags_are_remembered(folder, patched_cli, capsys):
+    cli.main(["index", str(folder), "--centre", "--recursive", *EMBED_ARGS])
+    cli.main(["index", str(folder), *EMBED_ARGS])
+    header = index_file.read_header(folder / indexing.INDEX_NAME)
+    assert header["embedding"]["similarity"] == "centred-cosine" and header["recursive"] is True
+    cli.main(["index", str(folder), "--no-centre", "--no-recursive", *EMBED_ARGS])
+    header = index_file.read_header(folder / indexing.INDEX_NAME)
+    assert header["embedding"]["similarity"] == "cosine" and header["recursive"] is False
 
 
 def test_cli_index_of_an_empty_folder(tmp_path, patched_cli, capsys):

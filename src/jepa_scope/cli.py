@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import sys
 import threading
 import webbrowser
@@ -114,7 +115,7 @@ def _index(args) -> None:
 
 def _search(args) -> int:
     from . import index_file, search
-    from .indexing import INDEX_NAME, ClipSkipped, load_query
+    from .indexing import INDEX_NAME
 
     if args.k < 1 or args.k > search.MAX_K:
         raise SystemExit(f"error: -k must be between 1 and {search.MAX_K}")
@@ -146,8 +147,12 @@ def _search(args) -> int:
     names = [c["path"] for c in clips]
     at = 0.0 if args.at is None else args.at
 
-    clip = _indexed_clip(args.query, names, root)
+    clip, query_sha = _indexed_clip(args.query, names, [c["sha256"] for c in clips], root)
+    if clip is None and query_sha is None:
+        raise SystemExit(f"error: {args.query} is neither a clip in the index nor a video file")
     if clip is not None:
+        if query_sha is not None:
+            print(f"{args.query} has the same contents as the indexed clip {names[clip]}; searching as that clip")
         if args.by == "clip":
             print(f"clips like {names[clip]}:")
             result = search.nearest_clips(space, clip, args.k)
@@ -157,32 +162,10 @@ def _search(args) -> int:
             print(f"moments like {names[clip]} at {at:g}s (window {window}, from {start:.2f}s):")
             result = search.nearest_moments(space, clip, window, args.k, same_clip=args.same_clip)
     else:
-        if not args.query.is_file():
-            raise SystemExit(f"error: {args.query} is neither a clip in the index nor a video file")
+        assert query_sha is not None
         if args.same_clip:
             raise SystemExit("error: --same-clip applies to a clip in the index only")
-        rep = index.header["representation"]
-        run = index.header["run"]
-        settings = EmbedSettings(
-            model=rep["model_id"],
-            fps=rep["window"]["sample_fps"],
-            window=rep["window"]["frames"],
-            max_seconds=run["max_seconds"],
-            device=run["device"],
-            dtype=run["dtype"],
-        )
-        provider = _model_provider(settings)
-        got = provider.representation()["hash"]
-        if got != rep["hash"]:
-            raise SystemExit(
-                f"error: {args.query} cannot be embedded the way this index was: the model here gives "
-                f"representation {got}, the index holds {rep['hash']} (other weights or preprocessing); "
-                "rebuild the index with `jepa-scope index` or search with the model it was built with"
-            )
-        try:
-            query = load_query(args.query, provider, settings, log=lambda m: print(m, flush=True))
-        except ClipSkipped as exc:
-            raise SystemExit(f"error: {args.query} cannot be embedded: {exc}") from None
+        query = _outside_query(args.query, query_sha, index.header)
         if args.by == "clip":
             print(f"clips like {args.query}:")
             result = search.search_clips(space, search.query_vector(space, query.pooled), args.k)
@@ -203,24 +186,66 @@ def _search(args) -> int:
     return 0
 
 
-def _indexed_clip(query: Path, names: list[str], root: Path) -> int | None:
-    """The position of ``query`` among the index's clips, or None when it is not one of them.
+def _indexed_clip(query: Path, names: list[str], shas: list[str], root: Path) -> tuple[int | None, str | None]:
+    """Which indexed clip ``query`` names, as ``(clip, sha256)``.
 
-    ``query`` matches a clip when it is written exactly as the clip's path relative to the root
-    (``sub/clip.mp4``), or when it is a path to an existing file that lies under the root and whose
-    path relative to the root is a clip's.
+    An existing file is taken as a file, never as a name. It is the clip whose path it is, when
+    its absolute path (with the folders above it resolved, but not a symlink at the end) lies under
+    the root; then the result is ``(clip, None)``. Otherwise it is hashed, and the result is
+    ``(clip, sha256)`` for the first clip with the same contents, or ``(None, sha256)`` for a video
+    that is not in the index. Only an argument that is not an existing file is matched against the
+    clips' relative paths, as written (``sub/clip.mp4``); ``(None, None)`` means no match.
     """
+    if query.is_file():
+        path = Path(os.path.abspath(query))
+        path = path.parent.resolve() / path.name
+        try:
+            rel = path.relative_to(root.resolve()).as_posix()
+        except ValueError:
+            rel = None
+        if rel in names:
+            return names.index(rel), None
+        try:
+            sha = latent_file.file_sha256(query)
+        except OSError as exc:
+            raise SystemExit(f"error: {query} cannot be read ({exc})") from None
+        return (shas.index(sha) if sha in shas else None), sha
     text = query.as_posix()
     if text in names:
-        return names.index(text)
-    if query.is_file():
-        try:
-            rel = query.resolve().relative_to(root.resolve()).as_posix()
-        except ValueError:
-            return None
-        if rel in names:
-            return names.index(rel)
-    return None
+        return names.index(text), None
+    return None, None
+
+
+def _outside_query(video: Path, video_sha256: str, header: dict):
+    """The window vectors of a video that is not in the index, embedded (through the cache) with
+    the index's model and settings. Exits with a message when that cannot be done here."""
+    from .indexing import ClipSkipped, find_query, load_query
+    from .model import device_available
+
+    settings = EmbedSettings.from_index(header)
+    rep = header["representation"]
+    if not device_available(settings.device):
+        raise SystemExit(
+            f"error: {video} is not in the index, and embedding it the way the index was built needs "
+            f"the {settings.device} device ({settings.dtype}), which is not available here; "
+            "a clip in the index can still be the query"
+        )
+    provider = _model_provider(settings)
+    got = provider.representation()["hash"]
+    if got != rep["hash"]:
+        raise SystemExit(
+            f"error: {video} cannot be embedded the way this index was: the model here gives "
+            f"representation {got}, the index holds {rep['hash']} (other weights or preprocessing); "
+            "rebuild the index with `jepa-scope index` or search with the model it was built with"
+        )
+    log = lambda m: print(m, flush=True)  # noqa: E731
+    found = find_query(video_sha256, provider, settings, log=log)
+    if found is not None:
+        return found
+    try:
+        return load_query(video, provider, settings, log=log, video_sha256=video_sha256)
+    except ClipSkipped as exc:
+        raise SystemExit(f"error: {video} cannot be embedded: {exc}") from None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -270,8 +295,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     pi.add_argument("folder", type=Path)
     pi.add_argument("--out", type=Path, default=None, help="index path (default: <folder>/jepa-scope.index)")
-    pi.add_argument("--recursive", action="store_true", help="include subfolders (symlinked folders are never entered)")
-    pi.add_argument("--centre", action="store_true", help="search with cosine similarity centred on the folder mean")
+    pi.add_argument(
+        "--recursive",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="include subfolders, never entering symlinked ones (default: as the existing index, else no)",
+    )
+    pi.add_argument(
+        "--centre",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="search with cosine similarity centred on the folder mean (default: as the existing index, else no)",
+    )
     pi.add_argument("--verify", action="store_true", help="hash every file, even when its size and time are unchanged")
     _add_embed_args(pi, patches_flag="--patches")
 

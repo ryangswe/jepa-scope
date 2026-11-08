@@ -37,6 +37,17 @@ def pick_device(requested: str | None = None) -> torch.device:
     return torch.device("cpu")
 
 
+def device_available(device: str) -> bool:
+    """Whether ``device`` (``cpu``, ``mps``, ``cuda`` or ``cuda:1`` and so on) can run here."""
+    kind = torch.device(device).type
+    if kind == "cpu":
+        return True
+    if kind == "mps":
+        return torch.backends.mps.is_available()
+    is_available = getattr(getattr(torch, kind, None), "is_available", None)
+    return bool(is_available()) if callable(is_available) else False
+
+
 def pick_dtype(device: torch.device, requested: str | None = None) -> torch.dtype:
     if requested:
         return {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}[requested]

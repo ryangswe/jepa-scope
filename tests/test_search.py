@@ -54,6 +54,7 @@ def build(clips, similarity: str = "cosine", dim: int | None = None) -> Index:
         "run": {"max_seconds": None, "device": "cpu", "dtype": "float32"},
         "embedding": {"kind": "window_vector", "similarity": similarity},
         "root": ".",
+        "recursive": False,
         "skipped": [],
         "clips": entries,
     }

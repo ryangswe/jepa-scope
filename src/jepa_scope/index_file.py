@@ -35,6 +35,7 @@ REQUIRED_HEADER_KEYS = (
     "run",
     "embedding",
     "root",
+    "recursive",
     "skipped",
     "clips",
 )
@@ -246,6 +247,8 @@ def check_header(header: dict[str, Any]) -> None:
     root = header["root"]
     if not isinstance(root, str) or not (root == "." or Path(root).is_absolute()):
         raise IndexFileError("root must be '.' or an absolute path")
+    if not isinstance(header["recursive"], bool):
+        raise IndexFileError("recursive must be true or false")
     skipped = header["skipped"]
     if not isinstance(skipped, list) or not all(
         isinstance(e, dict) and isinstance(e.get("path"), str) and isinstance(e.get("reason"), str) for e in skipped

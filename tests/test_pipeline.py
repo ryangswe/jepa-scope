@@ -293,6 +293,37 @@ def test_save_writes_the_current_format_version(latent, tmp_path):
     assert latent_file.read_header(out)["format_version"] == latent_file.FORMAT_VERSION == 2
 
 
+def test_save_uses_a_unique_temporary_file(latent, tmp_path):
+    """Two processes saving the same cache file must not share a temporary name: a directory in
+    the way of the old fixed name ("x.latent.tmp") does not stop a save."""
+    import os
+
+    tensors, header = latent_file.load(latent)
+    out = tmp_path / "out" / "x.latent"
+    out.parent.mkdir()
+    (out.parent / "x.latent.tmp").mkdir()
+    latent_file.save(out, tensors, header)
+    assert latent_file.read_header(out)["source"] == header["source"]
+    mask = os.umask(0)
+    os.umask(mask)
+    assert out.stat().st_mode & 0o777 == 0o666 & ~mask
+    assert sorted(p.name for p in out.parent.iterdir()) == ["x.latent", "x.latent.tmp"]
+
+
+def test_a_failed_save_leaves_no_temporary_file(latent, tmp_path, monkeypatch):
+    tensors, header = latent_file.load(latent)
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(latent_file, "save_file", boom)
+    out = tmp_path / "out"
+    out.mkdir()
+    with pytest.raises(OSError, match="disk full"):
+        latent_file.save(out / "x.latent", tensors, header)
+    assert list(out.iterdir()) == []
+
+
 def test_an_older_format_is_refused_and_re_embedded(latent, tmp_path, capsys):
     from jepa_scope import cache
 
