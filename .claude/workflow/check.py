@@ -15,8 +15,10 @@ Checks:
 - Every path-scoped rule in .claude/rules/ has a strict `paths:` header whose fixed prefixes exist
   (a header that fails to parse makes the rule load in every session instead).
 - docs/decisions.md, if present: under its byte budget, lines within the length limit, each theme
-  heading names an existing detail file; every detail entry opens with a status line; every index
-  line is claimed by an entry marked `live, indexed`, and every claim names an index line.
+  heading names an existing detail file, each detail file under its own budget when one is set
+  (entries that no longer apply move to docs/decisions/archive/, which is not checked); every
+  detail entry opens with a status line; every index line is claimed by an entry marked
+  `live, indexed`, and every claim names an index line.
 - docs/plans/README.md, if present: its "Active plans" list agrees with each dated plan's
   `Status:` line (a closed plan is not listed; an open one is).
 """
@@ -33,6 +35,7 @@ DEFAULTS = {
     "claude_md_max_bytes": 14336,
     "decisions_index_max_bytes": 20000,
     "decisions_line_max_chars": 250,
+    "decisions_theme_max_bytes": 0,  # 0 = no cap; new repositories are seeded with 40960
 }
 STATUS = re.compile(
     r"^\*\*Status:\*\* (live, indexed|live, not indexed|superseded by \d{4}-\d{2}-\d{2}"
@@ -144,7 +147,14 @@ def check_decisions(root: Path, cfg: dict, r: Report) -> None:
         if not detail.exists():
             r.fail("decisions", f"theme heading names {file}, which does not exist")
             continue
-        lines = detail.read_text(encoding="utf-8-sig").split("\n")
+        text = detail.read_text(encoding="utf-8-sig")
+        cap = cfg.get("decisions_theme_max_bytes") or 0
+        if cap and len(text.encode()) > cap:
+            size = len(text.encode())
+            r.fail("decisions", f"{file} is {size} bytes, over {cap}: move superseded, withdrawn "
+                                f"and record entries to docs/decisions/archive/{file}, which "
+                                "nothing loads or checks")
+        lines = text.split("\n")
         claims: list[tuple[int, str]] = []
         for i, line in enumerate(lines):
             h = HEADING.match(line)

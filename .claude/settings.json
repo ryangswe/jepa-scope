@@ -22,7 +22,9 @@
       "Bash(git push -f *)",
       "Bash(sudo *)",
       "Read(**/.env)",
-      "Read(**/.env.*)"
+      "Read(**/.env.local)",
+      "Read(**/.env.*.local)",
+      "Read(**/.env.production)"
     ]
   }
 }
