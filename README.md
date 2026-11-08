@@ -173,7 +173,7 @@ device or the dtype change, the index is rebuilt from scratch, and the program s
 The index remembers two choices. `--recursive` and `--centre` (see below) stay in effect on later
 runs until `--no-recursive` or `--no-centre` turns them off, even when the index is rebuilt. Turning
 `--recursive` off drops the clips in subfolders from the index, and turning it on again adds them
-back from the cache.
+back from the cache without embedding them again, though each one is hashed again.
 
 One bad file does not stop a run. A video that cannot be read, is too short for one window, has
 fewer frames per second than `--fps`, has no video stream, cannot be decoded, runs out of memory or

@@ -637,7 +637,7 @@ flowchart LR
 
 ### T4 — Week 3. The indexer and the CLI
 
-- **Status:** Pending
+- **Status:** Complete
 - **Dependencies:** T3
 - **Parallel group:** Sequential (optional overlap with T6, see Dependency summary)
 - **Complexity:** STRONG

@@ -224,12 +224,6 @@ def _outside_query(video: Path, video_sha256: str, header: dict):
 
     settings = EmbedSettings.from_index(header)
     rep = header["representation"]
-    if not device_available(settings.device):
-        raise SystemExit(
-            f"error: {video} is not in the index, and embedding it the way the index was built needs "
-            f"the {settings.device} device ({settings.dtype}), which is not available here; "
-            "a clip in the index can still be the query"
-        )
     provider = _model_provider(settings)
     got = provider.representation()["hash"]
     if got != rep["hash"]:
@@ -242,6 +236,13 @@ def _outside_query(video: Path, video_sha256: str, header: dict):
     found = find_query(video_sha256, provider, settings, log=log)
     if found is not None:
         return found
+    # Only embedding needs the device; a query the cache already holds works anywhere.
+    if not device_available(settings.device):
+        raise SystemExit(
+            f"error: {video} is not in the index, and embedding it the way the index was built needs "
+            f"the {settings.device} device ({settings.dtype}), which is not available here; "
+            "a clip in the index can still be the query"
+        )
     try:
         return load_query(video, provider, settings, log=log, video_sha256=video_sha256)
     except ClipSkipped as exc:

@@ -15,6 +15,7 @@ import shutil
 import struct
 from pathlib import Path
 
+import av
 import numpy as np
 import pytest
 
@@ -518,8 +519,14 @@ def test_out_in_a_subfolder_records_an_absolute_root(folder, run):
 
 @pytest.mark.parametrize(
     "error",
-    [RuntimeError("MPS backend out of memory"), MemoryError(), OSError(5, "Input/output error")],
-    ids=["runtime", "memory", "os"],
+    [
+        RuntimeError("MPS backend out of memory"),
+        MemoryError(),
+        OSError(5, "Input/output error"),
+        # PyAV's own OSError subclasses are FFmpegErrors too, and still transient.
+        av.error.PermissionError(13, "Permission denied"),
+    ],
+    ids=["runtime", "memory", "os", "pyav-permission"],
 )
 def test_a_transient_failure_is_retried_next_run(folder, run, embeds, monkeypatch, error):
     real = indexing.embed_video
@@ -615,6 +622,19 @@ def test_centre_and_recursive_are_remembered(folder, run, embeds, template):
     run(folder, settings=dataclasses.replace(SETTINGS, max_seconds=2.5), recursive=True)
     assert "sub/deep.mp4" in [c["path"] for c in index_file.load(folder / indexing.INDEX_NAME).header["clips"]]
     assert embeds == []  # the cache holds the subfolder clip, and the short clip is remembered
+
+
+def test_choices_survive_a_rebuild_of_an_index_with_damaged_tensors(folder, run):
+    out = folder / indexing.INDEX_NAME
+    run(folder, centre=True)
+    with open(out, "r+b") as f:  # the last bytes are tensor data; all-ones bytes make a NaN or a bad id
+        f.seek(-4, 2)
+        f.write(b"\xff" * 4)
+    with pytest.raises(index_file.IndexFileError):
+        index_file.load(out)
+    report = run(folder)
+    assert report.rebuilt is not None and report.centre
+    assert index_file.load(out).header["embedding"]["similarity"] == "centred-cosine"
 
 
 def test_settings_from_an_index_give_the_indexer_s_cache_path(folder, run, cache_dir):
@@ -755,6 +775,11 @@ def test_cli_search_needs_the_index_device_to_embed_a_query(folder, patched_cli,
     with pytest.raises(SystemExit, match=r"needs the mps device \(float16\), which is not available here"):
         cli.main(["search", str(folder), str(fresh)])
     assert cli.main(["search", str(folder), SQUARE, "-k", "1"]) == 0  # an indexed clip still works
+    # A query the cache already holds needs no device.
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    assert cli.main(["search", str(folder), str(fresh), "-k", "1"]) == 0
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    assert cli.main(["search", str(folder), str(fresh), "-k", "1"]) == 0
 
 
 def test_cli_search_refuses_a_query_from_another_representation(

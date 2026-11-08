@@ -148,3 +148,51 @@ The plan is `2026-11-06-weeks3-4-folder-search-trajectory.md`. Entries are newes
     `nearest_window`; T6 maps `k > MAX_K` to a 400. T4 should repeat the window-weighted-mean
     check against the indexer's output.
   - **Permanent decision record needed:** Yes, at T10 (search as plain cosine over window means).
+
+- **2026-11-08 — T4 complete: the indexer and the `index` and `search` commands.**
+  - **Evidence:** an executor (Opus) wrote `cache.py`, `indexing.py`, the two commands, 35 tests
+    in `tests/test_indexing.py` and a README section, and break-checked 30 rules. The cache
+    file names are byte-identical to the old `cli._cache_path` (pinned by a test, and checked by
+    the reviewer against the pre-T4 code), so no `OUTPUT_VERSION` question arose. The tiny
+    encoder's exact copy scores within `1e-6` of 1.0 by clip and at every window. A fresh
+    reviewer (Opus) found no critical defects but required three changes. Skips caused by the
+    environment (out of memory, `OSError`, any `RuntimeError`) were remembered forever; now only
+    content causes are remembered, keyed on size, mtime and the jepa-scope version. Two hard
+    checks (a representation mismatch, a file changed while it was indexed) had no test. And
+    `--centre` was silently dropped by the next refresh. The fix round also made query
+    resolution in `search` prefer an existing file and match by hash, refused a query that
+    needs an unavailable device with a message, added the shared `find_cache_file` and
+    `EmbedSettings.from_index` for T6, stopped a symlinked index file from forcing rebuilds, and
+    gave `latent_file.save` a unique temporary file so two processes embedding one video cannot
+    collide. Round 2 passed. The lead added its optional follow-ups: the device check for an
+    outside query now runs only when the query must be embedded, so a cached query works on any
+    machine; a test that PyAV's own `OSError` subclasses are not remembered; a test that the
+    choices survive a rebuild of an index with damaged tensors; and a README line. Each new rule
+    was break-checked. Deferred: reading the umask once at import (round 2 noted that `_umask()`
+    sets it to 0 briefly, which matters only if files are saved from threads; T6 does not, and
+    the umask tests need the live value). The fast suite passes.
+  - **Lead decision (mid-task):** `--centre` and `--recursive` are sticky. A refresh keeps the
+    choices the existing index recorded unless `--centre/--no-centre` or
+    `--recursive/--no-recursive` is given, and `recursive` is a new required index header key.
+    The index contract is not merged, so `INDEX_FORMAT_VERSION` stays 1. Without this, T6's
+    `jepa-scope <folder>` would silently switch a centred, recursive index back to plain cosine
+    and drop every subfolder clip.
+  - **Deviations:** the tests are in `tests/test_indexing.py`, not `tests/test_index.py`. The
+    model parameter of `build_or_refresh` is a `ModelProvider` named `model` (it describes the
+    representation without weights and loads the encoder lazily) instead of `encoder_factory`.
+    Files skipped for a content reason are remembered in `skipped` with `sha256`, `size`,
+    `mtime_ns` and the version, so a folder holding one short clip does not load the model on
+    every refresh. An index whose recorded root is another folder is rebuilt.
+  - **Measured (this laptop, MPS, 10 Kinetics-mini val clips of 10 s, 21 MB):** the first build
+    took 34 s (about 0.32 s of embedding per second of video, against the 0.35 s estimate). A
+    refresh with nothing new takes 3.2 to 3.8 s with no model load, against the "under two
+    seconds" estimate; almost all of it is importing transformers and torchvision inside
+    `Encoder.describe`, which loads the video processor for the preprocessing hash. Memoising
+    the description is possible later and not needed now. `search` on an indexed clip takes
+    0.7 s end to end, and the query itself is far below a millisecond at 86 windows (T3 measured
+    1.5 ms at 30,000).
+  - **Impact:** T5 builds its index with `build_or_refresh`. T6 uses `find_cache_file` and
+    `EmbedSettings.from_index` to find a clip's `.latent`, reads only `path` and `reason` from
+    `skipped`, and passes `centre=None, recursive=None` from the default command.
+  - **Permanent decision record needed:** Yes, at T10 (folded into the index contract entry: the
+    sticky choices and the remembered skips).
