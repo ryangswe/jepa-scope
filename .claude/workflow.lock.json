@@ -12,10 +12,10 @@
     ".claude/skills/gc/SKILL.md": "abfb7282d3000eb30b872df8313a17aa2c60a54e5951034c0bdfaa3da59bde71",
     ".claude/skills/handoff/SKILL.md": "1289ffc479b7761066212b576d1a22c8c134e3aeed7bff5945642acc439a3eab",
     ".claude/skills/parallel-work/SKILL.md": "94fbb922cf88fc005fd8cfa033c1c3559adbfde04fd759ca5f3c696f2afd9afe",
-    ".claude/workflow/check.py": "c3e23ff58df8e13365d69c85a5a54d1bfbc9557f08d745e426426715e09d6220",
+    ".claude/workflow/check.py": "f2e69f3c29d75e116ed3812bc3a33af7129a82c8d32b17d8782d8d4aed7ce29a",
     ".claude/workflow/gc.py": "30b0191f1171a1fe9d5f6bf10579a8eaa8a06db49da9a8437376df5bebb70af4",
     "docs/plans/_template.md": "9178c6a0a9807241ecd8d5624f9e07f94f6b5181e4a2290f44fd49f0c8b08d3f"
   },
-  "kit": "c9485b3 2026-11-06",
+  "kit": "9a00ece 2026-11-06",
   "level": "full"
 }
