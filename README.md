@@ -146,6 +146,56 @@ proportionally more memory and disk.
 recorded when it was made. A video with fewer frames per second than `--fps` is refused too,
 because each window would silently cover more time than the header says.
 
+## Indexing and searching a folder
+
+```bash
+jepa-scope index ~/videos                  # embed every video (cached) and write ~/videos/jepa-scope.index
+jepa-scope search ~/videos beach.mp4 --at 12
+jepa-scope search ~/videos beach.mp4 --by clip
+jepa-scope search ~/videos ~/elsewhere/query.mp4
+```
+
+`jepa-scope index` embeds every video in a folder through the same cache as the other commands and
+writes one index file, `jepa-scope.index`, beside the videos. It looks for `.mp4`, `.mov`, `.m4v`,
+`.mkv`, `.webm` and `.avi` files in any letter case, ignores names that start with a dot, and only
+enters subfolders with `--recursive`, which never follows a symlinked folder. It takes the same
+embedding options as `jepa-scope embed`. Unlike `embed`, it leaves the large `patches` tensor out of
+the cache files it writes, because search does not use it, and `--patches` keeps it.
+
+Running it again refreshes the index. A video whose size and modification time match the index, and
+whose cache file is still valid, is kept without being read. Any other video is hashed again and
+embedded only if the cache holds nothing for its contents, so renaming or touching a file costs one
+hash, and a file that was deleted is dropped from the index. A rerun with nothing new to embed does
+not load the model. `--verify` hashes every video whatever its size and time say, which catches a
+file replaced by another of the same size and time. If the model, the embedding settings, the
+device or the dtype change, the index is rebuilt from scratch, and the program says why.
+
+One bad file does not stop a run. A video that is too short for one window, has fewer frames per
+second than `--fps`, has no video stream, cannot be decoded, or makes the model produce invalid
+values is reported, skipped and listed in the index with the reason. It is not tried again until it
+changes or `--verify` is given.
+
+`jepa-scope search` takes the folder (or the index file) and a query. A query that is one of the
+indexed clips, given by its path inside the folder or by a path to the file, is searched with the
+vectors already in the index. Any other video is embedded through the cache with the model and
+settings the index was built with, and it is refused if this machine's model files would produce a
+different representation. By default the results are the moments in other clips most like the
+window at `--at` seconds, with overlapping windows of one clip collapsed to the best one;
+`--same-clip` also lists moments from the query's own clip, and `--by clip` compares whole clips. Each
+window is two seconds long at the defaults and a new one starts every second. Similarity is plain
+cosine between the mean tokens of two windows, and `jepa-scope index --centre` subtracts the
+folder's mean vector first.
+
+Only an index written beside the videos moves with the folder: it records the folder as "the
+directory I am in", so the folder can be copied or moved and searched again as is. An index written
+elsewhere with `--out` records the folder's absolute path. If that folder moves, pass its new
+location to `jepa-scope search` with `--source-root`.
+
+Each clip is embedded in one piece, so its decoded frames and the tokens of all its windows are in
+memory at once. By our estimates, clips of up to about 10 minutes each fit on a laptop with 32 GB
+of memory, and up to about 5 minutes with 16 GB. Use `--max-seconds` to index only the start of
+longer clips.
+
 ## Development
 
 ```bash

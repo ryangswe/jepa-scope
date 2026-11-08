@@ -3,25 +3,26 @@
 jepa-scope clip.mp4              embed (cached) and open the viewer
 jepa-scope embed clip.mp4 -o x   write a .latent file
 jepa-scope view x.latent         open the viewer for an existing .latent file
+jepa-scope index folder          embed every video in a folder (cached) and write its index
+jepa-scope search folder clip    list the moments or clips in the index most like a clip
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
+import math
 import sys
 import threading
 import webbrowser
 from pathlib import Path
 
-from . import OUTPUT_VERSION, __version__, latent_file
+from . import __version__, cache, latent_file
+from .cache import EmbedSettings
 
-SUBCOMMANDS = {"embed", "view"}
-CACHE_DIR = Path.home() / ".cache" / "jepa-scope"
+SUBCOMMANDS = {"embed", "view", "index", "search"}
 
 
-def _add_embed_args(p: argparse.ArgumentParser) -> None:
+def _add_embed_args(p: argparse.ArgumentParser, patches_flag: str = "--no-patches") -> None:
     from .model import DEFAULT_MODEL
 
     p.add_argument("--model", default=DEFAULT_MODEL, help="Hugging Face model id (default: %(default)s)")
@@ -31,11 +32,18 @@ def _add_embed_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--max-seconds", type=float, default=None, help="only embed the first N seconds")
     p.add_argument("--device", default=None, help="cuda, mps or cpu (default: best available)")
     p.add_argument("--dtype", choices=["float32", "float16", "bfloat16"], default=None)
-    p.add_argument(
-        "--no-patches",
-        action="store_true",
-        help="skip the full patch features (about 4 MB per second of video); the viewer does not need them",
-    )
+    if patches_flag == "--no-patches":
+        p.add_argument(
+            "--no-patches",
+            action="store_true",
+            help="skip the full patch features (about 4 MB per second of video); the viewer does not need them",
+        )
+    else:
+        p.add_argument(
+            "--patches",
+            action="store_true",
+            help="keep the full patch features of newly embedded clips (about 4 MB per second of video)",
+        )
 
 
 def _add_view_args(p: argparse.ArgumentParser) -> None:
@@ -80,60 +88,139 @@ def _serve(latent: Path, video: Path | None, port: int, open_browser: bool, vide
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 
-def _cache_path(video_sha256: str, args) -> Path:
-    """Cache file for this video and these settings.
-
-    The key covers everything that changes the output: the output version (bumped whenever the
-    energy, preprocessing or windowing changes), the model, sampling, and the device and dtype actually
-    used, so a CPU float32 run and an MPS float16 run never share a file.
-    """
-    from .model import pick_device, pick_dtype
-
-    device = pick_device(args.device)
-    settings = {
-        "output_version": OUTPUT_VERSION,
-        "model": args.model,
-        "fps": args.fps,
-        "window": args.window,
-        "max_seconds": args.max_seconds,
-        "device": device.type,
-        "dtype": str(pick_dtype(device, args.dtype)),
-        "patches": not args.no_patches,
-    }
-    digest = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()[:12]
-    return CACHE_DIR / f"{video_sha256[:16]}-{digest}.latent"
+def _model_provider(settings: EmbedSettings) -> cache.PretrainedModel:
+    """How the index and search commands reach the model (replaced in tests)."""
+    return cache.PretrainedModel(settings)
 
 
-def _expected_representation(args) -> str:
-    """Hash of the representation these settings would produce, read without loading weights when
-    the weight files are already in the local snapshot, and by loading the model otherwise."""
-    from .model import UNKNOWN_WEIGHTS, Encoder
+def _index(args) -> None:
+    from .indexing import build_or_refresh
 
-    block = Encoder.describe(args.model, None, args.window, args.fps)
-    if block["weights"] == UNKNOWN_WEIGHTS:
-        encoder = Encoder.from_pretrained(args.model, device=args.device, dtype=args.dtype)
-        block = encoder.representation(args.window, args.fps)
-    return block["hash"]
+    if not args.folder.is_dir():
+        raise SystemExit(f"error: {args.folder} is not a folder")
+    settings = EmbedSettings.from_args(args)
+    build_or_refresh(
+        args.folder,
+        _model_provider(settings),
+        settings,
+        out=args.out,
+        recursive=args.recursive,
+        patches=args.patches,
+        centre=args.centre,
+        verify=args.verify,
+        log=lambda m: print(m, flush=True),
+    )
 
 
-def _cache_is_valid(path: Path, expected_representation: str) -> bool:
-    """Whether a cache file can be reused: readable in the current format, made by this output
-    version, and holding the representation these settings would produce (same weights,
-    preprocessing, pooling and windowing). Otherwise it is re-embedded over the same path."""
-    if not path.exists():
-        return False
+def _search(args) -> int:
+    from . import index_file, search
+    from .indexing import INDEX_NAME, ClipSkipped, load_query
+
+    if args.k < 1 or args.k > search.MAX_K:
+        raise SystemExit(f"error: -k must be between 1 and {search.MAX_K}")
+    if args.by == "clip" and (args.at is not None or args.same_clip):
+        raise SystemExit("error: --at and --same-clip apply to --by moment only")
+    if args.at is not None and not math.isfinite(args.at):
+        raise SystemExit("error: --at must be a finite number of seconds")
+    index_path = args.index / INDEX_NAME if args.index.is_dir() else args.index
+    if not index_path.exists():
+        hint = f"; run `jepa-scope index {args.index}` first" if args.index.is_dir() else ""
+        raise SystemExit(f"error: {index_path} does not exist{hint}")
     try:
-        header = latent_file.read_header(path)
-    except (latent_file.LatentFileError, OSError, ValueError) as exc:
-        print(f"re-embedding: the cache file {path.name} cannot be used ({exc})", flush=True)
-        return False
-    if header["run"].get("output_version") != OUTPUT_VERSION:
-        print(f"re-embedding: the cache file {path.name} is from another output version", flush=True)
-        return False
-    if header["representation"]["hash"] != expected_representation:
-        print(f"re-embedding: the cache file {path.name} holds a different representation", flush=True)
-        return False
-    return True
+        index = index_file.load(index_path)
+    except (index_file.IndexFileError, OSError) as exc:
+        raise SystemExit(f"error: {exc}") from None
+    root = index.resolve_root(index_path, args.source_root)
+    if not root.is_dir():
+        if args.source_root is not None:
+            raise SystemExit(f"error: --source-root {root} is not a folder")
+        raise SystemExit(
+            f"error: the folder this index was built from, {root}, is not there; "
+            "if it moved, pass its new location with --source-root DIR"
+        )
+    clips = index.header["clips"]
+    if not clips:
+        print("nothing was indexed, so there is nothing to search")
+        return 0
+    space = search.prepare(index)
+    names = [c["path"] for c in clips]
+    at = 0.0 if args.at is None else args.at
+
+    clip = _indexed_clip(args.query, names, root)
+    if clip is not None:
+        if args.by == "clip":
+            print(f"clips like {names[clip]}:")
+            result = search.nearest_clips(space, clip, args.k)
+        else:
+            window = search.window_at(space, clip, at)
+            start = float(space.start_time[space.clip_start[clip] + window])
+            print(f"moments like {names[clip]} at {at:g}s (window {window}, from {start:.2f}s):")
+            result = search.nearest_moments(space, clip, window, args.k, same_clip=args.same_clip)
+    else:
+        if not args.query.is_file():
+            raise SystemExit(f"error: {args.query} is neither a clip in the index nor a video file")
+        if args.same_clip:
+            raise SystemExit("error: --same-clip applies to a clip in the index only")
+        rep = index.header["representation"]
+        run = index.header["run"]
+        settings = EmbedSettings(
+            model=rep["model_id"],
+            fps=rep["window"]["sample_fps"],
+            window=rep["window"]["frames"],
+            max_seconds=run["max_seconds"],
+            device=run["device"],
+            dtype=run["dtype"],
+        )
+        provider = _model_provider(settings)
+        got = provider.representation()["hash"]
+        if got != rep["hash"]:
+            raise SystemExit(
+                f"error: {args.query} cannot be embedded the way this index was: the model here gives "
+                f"representation {got}, the index holds {rep['hash']} (other weights or preprocessing); "
+                "rebuild the index with `jepa-scope index` or search with the model it was built with"
+            )
+        try:
+            query = load_query(args.query, provider, settings, log=lambda m: print(m, flush=True))
+        except ClipSkipped as exc:
+            raise SystemExit(f"error: {args.query} cannot be embedded: {exc}") from None
+        if args.by == "clip":
+            print(f"clips like {args.query}:")
+            result = search.search_clips(space, search.query_vector(space, query.pooled), args.k)
+        else:
+            window = search.nearest_window(query.window_start_time, space.window_seconds, at)
+            start = float(query.window_start_time[window])
+            print(f"moments like {args.query} at {at:g}s (window {window}, from {start:.2f}s):")
+            vector = search.query_vector(space, query.pooled[window : window + 1])
+            result = search.search_moments(space, vector, args.k)
+
+    if not result.hits:
+        print(f"no results: {result.reason}")
+        return 0
+    print(f"{'rank':>4}  {'score':>7}  {'time':>8}  clip")
+    for rank, hit in enumerate(result.hits, 1):
+        time = f"{hit.start_time:.2f}s" if isinstance(hit, search.Hit) else "-"
+        print(f"{rank:>4}  {hit.score:>7.4f}  {time:>8}  {names[hit.clip]}")
+    return 0
+
+
+def _indexed_clip(query: Path, names: list[str], root: Path) -> int | None:
+    """The position of ``query`` among the index's clips, or None when it is not one of them.
+
+    ``query`` matches a clip when it is written exactly as the clip's path relative to the root
+    (``sub/clip.mp4``), or when it is a path to an existing file that lies under the root and whose
+    path relative to the root is a clip's.
+    """
+    text = query.as_posix()
+    if text in names:
+        return names.index(text)
+    if query.is_file():
+        try:
+            rel = query.resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            return None
+        if rel in names:
+            return names.index(rel)
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -149,9 +236,10 @@ def main(argv: list[str] | None = None) -> int:
         if not args.video.exists():
             p.error(f"{args.video} does not exist")
         video_sha256 = latent_file.file_sha256(args.video)
-        out = _cache_path(video_sha256, args)
+        settings = EmbedSettings.from_args(args)
+        out = cache.cache_path(video_sha256, settings, patches=not args.no_patches)
         # The representation is described (a few seconds of imports) only when a file exists to check.
-        if args.refresh or not out.exists() or not _cache_is_valid(out, _expected_representation(args)):
+        if args.refresh or not out.exists() or not cache.cache_is_valid(out, cache.expected_representation(settings)):
             _embed(args.video, out, args)
         else:
             print(f"using cached {out}", flush=True)
@@ -174,6 +262,33 @@ def main(argv: list[str] | None = None) -> int:
     pv.add_argument("--video", type=Path, default=None, help="source video, if it moved since embedding")
     _add_view_args(pv)
 
+    pi = sub.add_parser(
+        "index",
+        help="embed every video in a folder (cached) and write the folder's index",
+        description="Embed every video in a folder through the cache and write jepa-scope.index beside "
+        "them. A rerun only embeds what is new or changed.",
+    )
+    pi.add_argument("folder", type=Path)
+    pi.add_argument("--out", type=Path, default=None, help="index path (default: <folder>/jepa-scope.index)")
+    pi.add_argument("--recursive", action="store_true", help="include subfolders (symlinked folders are never entered)")
+    pi.add_argument("--centre", action="store_true", help="search with cosine similarity centred on the folder mean")
+    pi.add_argument("--verify", action="store_true", help="hash every file, even when its size and time are unchanged")
+    _add_embed_args(pi, patches_flag="--patches")
+
+    ps = sub.add_parser(
+        "search",
+        help="list the moments or clips in an index most like a clip",
+        description="Search a folder's index with one of its clips, or with any video, which is then "
+        "embedded the way the index was.",
+    )
+    ps.add_argument("index", type=Path, help="an indexed folder, or an index file")
+    ps.add_argument("query", type=Path, help="a clip in the index (its path relative to the folder) or a video file")
+    ps.add_argument("--at", type=float, default=None, help="time in the query clip, in seconds (default: 0)")
+    ps.add_argument("-k", type=int, default=10, help="number of results (default: %(default)s)")
+    ps.add_argument("--by", choices=["moment", "clip"], default="moment", help="what to compare (default: %(default)s)")
+    ps.add_argument("--same-clip", action="store_true", help="also list moments from the query's own clip")
+    ps.add_argument("--source-root", type=Path, default=None, help="where the indexed folder is now, if it moved")
+
     args = p.parse_args(argv)
     if args.cmd == "embed":
         if not args.video.exists():
@@ -181,6 +296,10 @@ def main(argv: list[str] | None = None) -> int:
         _embed(args.video, args.out or Path(args.video.stem + ".latent"), args)
     elif args.cmd == "view":
         _serve(args.latent, args.video, args.port, not args.no_browser)
+    elif args.cmd == "index":
+        _index(args)
+    elif args.cmd == "search":
+        return _search(args)
     return 0
 
 

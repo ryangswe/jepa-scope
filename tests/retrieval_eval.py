@@ -119,8 +119,8 @@ def even(frame: np.ndarray) -> np.ndarray:
 
 
 class CachedEmbedder:
-    """Embeds through ``cli._cache_path`` and ``cli._cache_is_valid`` at the CLI defaults, so a rerun
-    embeds nothing. The model loads only when a file is missing from the cache."""
+    """Embeds through ``cache.cache_path`` and ``cache.cache_is_valid`` at the CLI defaults, so a
+    rerun embeds nothing. The model loads only when a file is missing from the cache."""
 
     def __init__(self, log=print):
         from jepa_scope.model import DEFAULT_MODEL
@@ -155,13 +155,14 @@ class CachedEmbedder:
         return int(processor.size["shortest_edge"])
 
     def load(self, path: Path) -> tuple[dict[str, np.ndarray], dict]:
-        from jepa_scope import cli, latent_file
+        from jepa_scope import cache, latent_file
         from jepa_scope.embed import embed_video
 
-        out = cli._cache_path(latent_file.file_sha256(path), self.args)
+        settings = cache.EmbedSettings.from_args(self.args)
+        out = cache.cache_path(latent_file.file_sha256(path), settings, patches=not self.args.no_patches)
         if self._expected is None:
-            self._expected = cli._expected_representation(self.args)
-        if not cli._cache_is_valid(out, self._expected):
+            self._expected = cache.expected_representation(settings)
+        if not cache.cache_is_valid(out, self._expected):
             self.log(f"embedding {path.name}")
             tensors, header = embed_video(
                 path,
