@@ -14,8 +14,8 @@ Before editing:
 1. Read `CLAUDE.md` and obey its invariants and working agreements.
 2. Read the assigned task and only the docs and code needed for it.
 3. Confirm the checkout is not on the default branch (`main`/`master`); never change files there.
-4. Confirm the scope, the files you may touch, the success criteria, the verification and the
-   escalation conditions.
+4. Confirm the scope, the success criteria and the verification, and the files you may touch and
+   the escalation conditions where the brief names them.
 
 While working:
 

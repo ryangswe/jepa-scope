@@ -2,20 +2,20 @@
   "excluded": [],
   "files": {
     ".claude/agents/architect.md": "48fe7a09c04c46670265be39dab3c2f1152f84ee8e36875f0c7aabd99db91631",
-    ".claude/agents/executor.md": "06765095210290ade870df7d5d20eda1138e427be3023f4656784e0863708c92",
+    ".claude/agents/executor.md": "d1c1bf254aeb68450899a65a5ef7de7d35f0c4227ec749b192d7fd5b649f98bf",
     ".claude/agents/explore.md": "5ad8a5c9ea6d6975e572c0faaff6db9bc1345393eb1cce23392be2c3fc7c6693",
-    ".claude/agents/planner.md": "229e070a31315ed476658d754712a6d065535933e7aae878dbbf4de28d0891af",
-    ".claude/agents/reviewer.md": "f04f1e4d823724f21c977fd87ec35e4cfc74c9bac9344a0f14c526907de57e4d",
+    ".claude/agents/planner.md": "685d62426ea902bd723706d0af7d8a4f66adcaf0151a162542e53fcefa5cf21d",
+    ".claude/agents/reviewer.md": "d5552125d326b75723f1c1305daac077cd2c46128ef7c2c734e5b1619e803957",
     ".claude/hooks/guard-default-branch.py": "8788b877187d802eb87d316d47ae0bb43ebb67782bb1d4f55bd24b643a1b2fc9",
-    ".claude/review-checklists.md": "fbbcfa915376edcf21d7ba990c96c558a9795fd8a874b9f72f57ff15c52d04f1",
+    ".claude/review-checklists.md": "7723146d149447b74cfe51ac77c371aaec3a048b0a39b19e90e74b6cec5ef94c",
     ".claude/skills/checkpoint/SKILL.md": "e773f095fca977e9872d0b7c13cc7918b065443de8095896d0097aeb07c1e739",
     ".claude/skills/gc/SKILL.md": "abfb7282d3000eb30b872df8313a17aa2c60a54e5951034c0bdfaa3da59bde71",
-    ".claude/skills/handoff/SKILL.md": "1289ffc479b7761066212b576d1a22c8c134e3aeed7bff5945642acc439a3eab",
-    ".claude/skills/parallel-work/SKILL.md": "94fbb922cf88fc005fd8cfa033c1c3559adbfde04fd759ca5f3c696f2afd9afe",
+    ".claude/skills/handoff/SKILL.md": "34b2db6edd429bb973969142d00619f4943b61ecd7f55d4a88e5a097edc5b669",
+    ".claude/skills/parallel-work/SKILL.md": "afedd666e0fe65d46642f00502f3d986291a78f7ee4e67cd2dd637122e30e5dc",
     ".claude/workflow/check.py": "f2e69f3c29d75e116ed3812bc3a33af7129a82c8d32b17d8782d8d4aed7ce29a",
     ".claude/workflow/gc.py": "30b0191f1171a1fe9d5f6bf10579a8eaa8a06db49da9a8437376df5bebb70af4",
-    "docs/plans/_template.md": "9178c6a0a9807241ecd8d5624f9e07f94f6b5181e4a2290f44fd49f0c8b08d3f"
+    "docs/plans/_template.md": "075ca3feeb148907c8d21d56c592376d447eb16eea0e6045d209f117cb0eba35"
   },
-  "kit": "9a00ece 2026-11-06",
+  "kit": "1fa72c4 2026-11-09",
   "level": "full"
 }

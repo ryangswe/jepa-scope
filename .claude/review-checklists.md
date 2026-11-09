@@ -32,21 +32,25 @@ stages.
 1. List the states and every place that writes each one. Is there a state the code reaches but
    never names, or are there two flags that can disagree (for example "not stopped" while the
    core says "failed")?
-2. For each outside event (a reply, a close, a timeout, a message, a click), what happens if it
+2. Which states are final (done, verified, rejected, consumed, expired)? For every writer, read
+   its code: does it check the current state before it writes, so that nothing leaves a final
+   state or overwrites an outcome already recorded? A plan or comment that lists the states and
+   their transitions is not proof that the code enforces them.
+3. For each outside event (a reply, a close, a timeout, a message, a click), what happens if it
    arrives twice, late (after its owner was replaced), out of order, or never?
-3. If the work fails or crashes midway, what state is left? Does a retry or a restart recover
+4. If the work fails or crashes midway, what state is left? Does a retry or a restart recover
    from it, or does it skip or repeat work?
-4. Does every handler that acts for an owner (a socket, worker, request or generation) check
+5. Does every handler that acts for an owner (a socket, worker, request or generation) check
    that the owner is still the current one? Search for every place that sets or uses that
    owner, including handlers the diff did not change, and compare them: if three check and one
    doesn't, the odd one out needs a reason, even when a comment gives one.
-5. On teardown and on every failure path, is everything released: timers, workers, sockets,
+6. On teardown and on every failure path, is everything released: timers, workers, sockets,
    listeners, slots, tickets?
-6. Can a failure turn into an apparent success, such as an empty result treated as fine or a
+7. Can a failure turn into an apparent success, such as an empty result treated as fine or a
    failure counter reset by a reply that did nothing?
-7. Retries: is there one timer per thing, is the backoff reset only by real success, and is
+8. Retries: is there one timer per thing, is the backoff reset only by real success, and is
    there a state where it gives up and says so?
-8. Do sequence numbers, versions and expiry times survive a reconnect, restart or restore the way
+9. Do sequence numbers, versions and expiry times survive a reconnect, restart or restore the way
    their readers assume? Does restored state keep its original expiry, or restart it? Does any
    timer or ordering read the wall clock where a step backwards would break it?
 
@@ -146,8 +150,8 @@ revert left the check to it.
    was missing or too narrow, a lint rule that was off, a review question nobody asked, a review
    that was skipped, or a live check that wasn't run. `Missed by: none (<reason>)` is a valid answer
    when no reasonable check would have caught it. Before a PR exists, look for the line in the plan,
-   the brief or the commit message. A missing line is a Minor finding before the PR is opened and a
-   Major one after, because the PR description is where it is collected.
+   the brief or the commit message. A missing line is a Minor finding: it records how the bug got
+   through, and the fix itself is judged on its own.
 2. Does the diff add that check, or say where it went? A regression test must fail without the fix,
    so answer checklist 6, item 1 for it. A lint rule counts. A revert may leave the check to the PR
    that lands the change again, if the revert's `Missed by:` line says so. A new review question

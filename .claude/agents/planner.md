@@ -23,18 +23,22 @@ say so and give the new reason.
 
 Follow `docs/plans/_template.md`. At minimum:
 
-1. **Approach**: the architecture in a few sentences: what changes, where the seams are, and any
-   shared contract whose sides must change together.
-2. **Alternatives considered**: at least one, and why it lost. Flag decisions that meet the bar
-   for a decision record.
+1. **Goal**: what it delivers and the scope boundary. Call out anything the request would have
+   you build ahead of where it belongs.
+2. **Approach**: the architecture in a few sentences: what changes, where the seams are, and any
+   shared contract whose sides must change together. When there was a real choice, name the
+   approach that lost and why. Flag decisions that meet the bar for a decision record.
 3. **Risks and open questions**: anything that needs the owner's decision before work starts.
-   Ask; don't assume. Get the scope boundary right: call out anything the request would have you
-   build ahead of where it belongs.
-4. **Tasks**: small, separately verifiable units in order, each with files, dependencies,
-   complexity class (ROUTINE / STRONG / FRONTIER), success criteria, verification, escalation
-   conditions, and the owner's hours it needs (reviews, live checks, labelling, decisions).
-5. **Execution strategy**: what runs at the same time and in which worktree, which
-   single-instance resources it claims, the approval gates, and the owner-only actions involved.
+   Ask; don't assume.
+4. **Tasks**: small, separately verifiable units in order, each with dependencies, success
+   criteria and verification. When the work needs the owner's time (reviews, live checks,
+   labelling, decisions), give the total hours in the header.
+5. **For larger plans** (several delegated tasks, or work that runs at the same time), the
+   template's optional task fields: a **Model** when a task needs more than its agent's default
+   (for example `executor` on Opus for a subtle concurrency or data-migration change),
+   **Escalate if** for conditions specific to one task, and **Parallel with**.
+6. **Concurrency**, only when tasks will run at the same time: the table from the
+   `parallel-work` skill.
 
 Make the plan concrete enough that a fresh session, possibly on another model, can execute it from
 the text alone. For a large plan, name the path it should be saved to
