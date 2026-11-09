@@ -95,6 +95,32 @@ def _write_once(path: Path, frames: np.ndarray, fps: int) -> Path:
     return path
 
 
+def _composite_sources(clips):
+    """T0's composite sources, in order: the first clip of archery, bowling, flying kite and
+    marching (the four queried segments), then the second archery and bowling clips."""
+    from . import retrieval_eval as rv
+
+    by_class = {k: [c for c in clips if c.label == k] for k in rv.CLASSES}
+    return [by_class[k][0] for k in ("archery", "bowling", "flying_kite", "marching")] + [
+        by_class["archery"][1],
+        by_class["bowling"][1],
+    ]
+
+
+def _composite(sources, out_dir: Path) -> tuple[Path, list[int]]:
+    """The 30-second localisation composite: five seconds of each source, written once (so its
+    cache file is reused), and the frame count of each segment."""
+    from . import retrieval_eval as rv
+
+    seconds = rv.SEGMENT_SECONDS
+    parts = [
+        _fit(decode(c.path, sample_fps=rv.COMPOSITE_FPS, max_seconds=seconds).frames[: rv.COMPOSITE_FPS * seconds])
+        for c in sources
+    ]
+    path = _write_once(out_dir / "composite.mp4", np.concatenate(parts), fps=rv.COMPOSITE_FPS)
+    return path, [len(p) for p in parts]
+
+
 def _rate_line(name: str, count: int, n: int, extra: str = "") -> str:
     return f"  {name:<28} {count:>3}/{n}  {count / n:.2f}{extra}"
 
@@ -213,21 +239,11 @@ def test_retrieval_candidates(split, tmp_path_factory):
     # Temporal localisation and its mutation (selection set only).
     localised = {}
     if selecting:
-        by_class = {k: [e for e in kept if e.clip.label == k] for k in rv.CLASSES}
-        sources = [by_class[k][0] for k in ("archery", "bowling", "flying_kite", "marching")]
-        sources += [by_class["archery"][1], by_class["bowling"][1]]
-        seconds = rv.SEGMENT_SECONDS
-        parts = [
-            _fit(
-                decode(s.clip.path, sample_fps=rv.COMPOSITE_FPS, max_seconds=seconds).frames[
-                    : rv.COMPOSITE_FPS * seconds
-                ]
-            )
-            for s in sources
-        ]
-        if not all(len(p) == rv.COMPOSITE_FPS * seconds for p in parts):
-            failures.append(f"a composite segment is short: {[len(p) for p in parts]} frames")
-        comp_path = _write_once(out_dir / "composite.mp4", np.concatenate(parts), fps=rv.COMPOSITE_FPS)
+        order = _composite_sources([e.clip for e in kept])
+        sources = [next(e for e in kept if e.clip is c) for c in order]
+        comp_path, lengths = _composite(order, out_dir)
+        if not all(n_ == rv.COMPOSITE_FPS * rv.SEGMENT_SECONDS for n_ in lengths):
+            failures.append(f"a composite segment is short: {lengths} frames")
         comp = rv.embed_clip(emb, rv.Clip(name="composite.mp4", label="composite", path=comp_path))
         report.put("composite_window_starts", comp.starts.tolist())
         if not (len(comp.starts) == 29 and np.allclose(comp.starts, np.arange(29), atol=0.05)):
@@ -332,3 +348,157 @@ def test_retrieval_candidates(split, tmp_path_factory):
     report.put("failures", failures)
     print(f"wrote {report.write(out_dir)} in {report.data['seconds']} s")
     assert not failures, "; ".join(failures)
+
+
+def test_search_reproduces_experiment(tmp_path_factory):
+    """T0's result through the product code: the folder indexer, the index file and ``search``.
+
+    The 50 val clips are copied out of the Hugging Face cache into a folder with one subfolder per
+    class (so the index is never written beside the cache), indexed recursively with the CLI
+    defaults, and scored with ``nearest_clips``. The vectors come from a fresh embedding run, so
+    the clip-level count may differ from T0's by one clip. Localisation runs on a second index
+    that also holds T0's composite, through ``nearest_moments`` as the viewer calls it. The
+    clip-level count and the window-level rate must match T0's within one clip (0.02), and
+    localisation may miss at most one of T0's 16 passes.
+    """
+    import json
+    import shutil
+
+    from huggingface_hub import snapshot_download
+
+    from jepa_scope import index_file, search
+    from jepa_scope.cache import EmbedSettings, PretrainedModel
+    from jepa_scope.indexing import INDEX_NAME, build_or_refresh
+    from jepa_scope.model import DEFAULT_MODEL
+
+    from . import retrieval_eval as rv
+
+    t_start = time.perf_counter()
+    model_dir = Path(snapshot_download(DEFAULT_MODEL, local_files_only=True))
+    assert model_dir.name == rv.MODEL_REVISION, f"model snapshot is {model_dir.name}, not the frozen one"
+    root = Path(
+        snapshot_download(rv.DATASET, repo_type="dataset", revision=rv.DATASET_REVISION, allow_patterns="val/*")
+    )
+    clips = rv.manifest(root, "val")
+    assert len(clips) == len(rv.CLASSES) * rv.CLIPS_PER_CLASS
+    out_dir = _eval_dir(tmp_path_factory)
+    settings = EmbedSettings(model=DEFAULT_MODEL, fps=rv.SAMPLE_FPS, window=rv.WINDOW)
+    model = PretrainedModel(settings)
+    result = {"t0": rv.T0_VAL}
+
+    def folder_of(name: str, extra: list[Path] = ()) -> Path:
+        folder = tmp_path_factory.mktemp(name)
+        for c in clips:
+            (folder / c.label).mkdir(exist_ok=True)
+            shutil.copyfile(c.path, folder / c.label / c.path.name)
+        for p in extra:
+            shutil.copyfile(p, folder / p.name)
+        return folder
+
+    def build(folder: Path):
+        t0 = time.perf_counter()
+        report = build_or_refresh(folder, model, settings, recursive=True, log=lambda m: print(m, flush=True))
+        assert report.skipped == [], report.skipped
+        index = index_file.load(folder / INDEX_NAME)
+        return index, search.prepare(index), report, round(time.perf_counter() - t0, 1)
+
+    # Clip-level and window-level retrieval.
+    index, space, report, seconds = build(folder_of("val"))
+    header = index.header
+    assert header["embedding"]["similarity"] == search.DEFAULT_SIMILARITY == "cosine"
+    assert header["representation"]["pooling"] == "mean_all" and header["representation"]["token_norm"] == "none"
+    paths = [c["path"] for c in header["clips"]]
+    labels = [p.split("/")[0] for p in paths]
+    n = len(paths)
+    assert n == len(clips)
+    clip_hits = []
+    # T0 excluded the query's YouTube source group; nearest_clips excludes only the query clip.
+    # These coincide because every clip in the frozen manifest has its own id (T0 asserts it).
+    for i in range(n):
+        hits = search.nearest_clips(space, i, 1).hits
+        clip_hits.append(bool(hits) and labels[hits[0].clip] == labels[i])
+    count = sum(clip_hits)
+    per_class = {k: sum(h for h, lab in zip(clip_hits, labels, strict=True) if lab == k) for k in rv.CLASSES}
+    window_hits = []
+    for i in range(n):
+        rows = index.clip_rows(i)
+        for w in range(rows.stop - rows.start):
+            hits = search.nearest_moments(space, i, w, 1).hits
+            window_hits.append(bool(hits) and labels[hits[0].clip] == labels[i])
+    result.update(
+        clips=n,
+        windows=int(len(index.pooled)),
+        embedded=report.embedded,
+        index_seconds=seconds,
+        clip_top1_count=count,
+        clip_top1_rate=count / n,
+        per_class_hits=per_class,
+        window_top1_rate=sum(window_hits) / len(window_hits),
+        per_clip=[{"clip": p, "hit": h} for p, h in zip(paths, clip_hits, strict=True)],
+    )
+
+    # Localisation on a second index that also holds the composite.
+    comp_path, lengths = _composite(_composite_sources(clips), out_dir)
+    assert all(n_ == rv.COMPOSITE_FPS * rv.SEGMENT_SECONDS for n_ in lengths), lengths
+    index2, space2, report2, seconds2 = build(folder_of("val-composite", [comp_path]))
+    paths2 = [c["path"] for c in index2.header["clips"]]
+    comp = paths2.index("composite.mp4")
+    comp_starts = index2.window_start_time[index2.clip_rows(comp)]
+    assert len(comp_starts) == 29 and np.allclose(comp_starts, np.arange(29), atol=0.05), comp_starts
+    window_seconds = rv.WINDOW / rv.SAMPLE_FPS
+    boundaries = [rv.SEGMENT_SECONDS * k for k in range(1, len(comp_starts) + 1)]
+    queries = []
+    for i, source in enumerate(_composite_sources(clips)[:4]):
+        own = paths2.index(f"{source.label}/{source.path.name}")
+        starts = index2.window_start_time[index2.clip_rows(own)]
+        for w in range(rv.QUERY_WINDOWS):
+            target = rv.SEGMENT_SECONDS * i + float(starts[w])
+            row = {"segment": i, "query_start": float(starts[w]), "target": target}
+            for key, same in (("cross_clip", False), ("same_clip", True)):
+                top = search.nearest_moments(space2, own, w, 1, same_clip=same).hits[0]
+                on_comp = top.clip == comp
+                crossing = on_comp and rv.transition(top.start_time, boundaries, window_seconds)
+                row[key] = {
+                    "hit": paths2[top.clip],
+                    "hit_start": top.start_time,
+                    "transition": crossing,
+                    # A transition window was not a candidate in T0, so a hit on one counts as a miss.
+                    "pass": on_comp and not crossing and abs(top.start_time - target) <= rv.TOLERANCE_SECONDS + 1e-6,
+                    "own_clip": top.clip == own,
+                }
+            queries.append(row)
+    loc = {
+        key: {
+            "passed": sum(q[key]["pass"] for q in queries),
+            "transition_hits": sum(q[key]["transition"] for q in queries),
+            "own_clip_hits": sum(q[key]["own_clip"] for q in queries),
+            "of": len(queries),
+        }
+        for key in ("cross_clip", "same_clip")
+    }
+    result.update(localisation=loc, localisation_queries=queries, composite_index_seconds=seconds2)
+    result.update(embedded_composite_index=report2.embedded, seconds=round(time.perf_counter() - t_start, 1))
+    bars = rv.at_least(count, n, rv.BAR_RATE) and rv.at_least(count - rv.T0_VAL["colour_baseline"], n, rv.BAR_MARGIN)
+    result["meets_bars"] = bars
+
+    print(f"\n=== search reproduces T0 (val): {n} clips, {result['windows']} windows")
+    print(f"index built in {seconds} s, embedded {report.embedded}; composite index {seconds2} s")
+    print(_rate_line("clip-level top-1", count, n, f"  (T0 {rv.T0_VAL['clip_top1_count']}/{n}) {per_class}"))
+    print(f"  window-level top-1 rate {result['window_top1_rate']:.4f} (T0 {rv.T0_VAL['window_top1_rate']:.4f})")
+    for key, r in loc.items():
+        print(
+            f"localisation {key}: {r['passed']}/{r['of']} pass; {r['transition_hits']} on a transition window; "
+            f"{r['own_clip_hits']} in the query's own clip"
+        )
+    path = out_dir / "search-reproduction-val.json"
+    path.write_text(json.dumps(result, indent=2, sort_keys=True))
+    print(f"wrote {path} in {result['seconds']} s")
+
+    assert abs(count - rv.T0_VAL["clip_top1_count"]) <= 1, f"{count}/{n} against T0's {rv.T0_VAL['clip_top1_count']}"
+    assert bars, f"{count}/{n} misses the bars (rate {rv.BAR_RATE}, margin {rv.BAR_MARGIN} over the colour baseline)"
+    # nearest_moments carries the exclusion, overlap and tie rules that nearest_clips does not, so
+    # its results are held to T0's too (same_clip=True is descriptive only).
+    rate, t0_rate = result["window_top1_rate"], rv.T0_VAL["window_top1_rate"]
+    assert abs(rate - t0_rate) <= 0.02, f"window-level top-1 {rate:.4f} against T0's {t0_rate:.4f}"
+    passed, t0_passed = loc["cross_clip"]["passed"], rv.T0_VAL["localisation_passed"]
+    assert passed >= t0_passed - 1, f"localisation {passed}/{len(queries)} against T0's {t0_passed}"

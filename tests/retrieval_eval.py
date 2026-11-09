@@ -47,6 +47,16 @@ COMPOSITE_FPS = 8
 QUERY_WINDOWS = 4  # windows starting at 0, 1, 2 and 3 s lie fully inside a 5 s segment
 TOLERANCE_SECONDS = 1.0
 
+# T0's recorded result on the val split, for the default (a). T5 reproduces it through the product
+# code; the numbers are in the plan's execution log (2026-11-06-weeks3-4-folder-search-trajectory).
+T0_VAL = {
+    "default": "a",
+    "clip_top1_count": 42,
+    "window_top1_rate": 0.7427184466019418,
+    "colour_baseline": 15,  # the stronger of the two colour baselines (whole clip)
+    "localisation_passed": 16,
+}
+
 
 @dataclass
 class Clip:
@@ -119,8 +129,8 @@ def even(frame: np.ndarray) -> np.ndarray:
 
 
 class CachedEmbedder:
-    """Embeds through ``cli._cache_path`` and ``cli._cache_is_valid`` at the CLI defaults, so a rerun
-    embeds nothing. The model loads only when a file is missing from the cache."""
+    """Embeds through ``cache.cache_path`` and ``cache.cache_is_valid`` at the CLI defaults, so a
+    rerun embeds nothing. The model loads only when a file is missing from the cache."""
 
     def __init__(self, log=print):
         from jepa_scope.model import DEFAULT_MODEL
@@ -155,13 +165,14 @@ class CachedEmbedder:
         return int(processor.size["shortest_edge"])
 
     def load(self, path: Path) -> tuple[dict[str, np.ndarray], dict]:
-        from jepa_scope import cli, latent_file
+        from jepa_scope import cache, latent_file
         from jepa_scope.embed import embed_video
 
-        out = cli._cache_path(latent_file.file_sha256(path), self.args)
+        settings = cache.EmbedSettings.from_args(self.args)
+        out = cache.cache_path(latent_file.file_sha256(path), settings, patches=not self.args.no_patches)
         if self._expected is None:
-            self._expected = cli._expected_representation(self.args)
-        if not cli._cache_is_valid(out, self._expected):
+            self._expected = cache.expected_representation(settings)
+        if not cache.cache_is_valid(out, self._expected):
             self.log(f"embedding {path.name}")
             tensors, header = embed_video(
                 path,

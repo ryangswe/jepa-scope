@@ -1,3 +1,5 @@
+import dataclasses
+
 import numpy as np
 import pytest
 import torch
@@ -202,29 +204,54 @@ def test_embed_without_patches(tiny_encoder, moving_square_video):
 
 
 def test_cache_key_depends_on_dtype_and_output_version(monkeypatch):
-    import argparse
+    from jepa_scope import cache
 
-    from jepa_scope import cli
-
-    base = dict(model="m", fps=8.0, window=16, max_seconds=None, device="cpu", dtype=None, no_patches=False)
-    k1 = cli._cache_path("ab" * 32, argparse.Namespace(**base))
-    k2 = cli._cache_path("ab" * 32, argparse.Namespace(**{**base, "dtype": "float16"}))
-    monkeypatch.setattr(cli, "OUTPUT_VERSION", 999)
-    k3 = cli._cache_path("ab" * 32, argparse.Namespace(**base))
+    base = cache.EmbedSettings(model="m", fps=8.0, window=16, device="cpu")
+    k1 = cache.cache_path("ab" * 32, base, patches=True)
+    k2 = cache.cache_path("ab" * 32, dataclasses.replace(base, dtype="float16"), patches=True)
+    monkeypatch.setattr(cache, "OUTPUT_VERSION", 999)
+    k3 = cache.cache_path("ab" * 32, base, patches=True)
     assert len({k1, k2, k3}) == 3
 
 
+@pytest.mark.parametrize(
+    "settings, patches, name",
+    [
+        (dict(model="m", fps=8.0, window=16, device="cpu"), True, "abababababababab-f685d2fd5882.latent"),
+        (
+            dict(model="facebook/vjepa2-vitl-fpc64-256", fps=8.0, window=16, device="mps"),
+            False,
+            "abababababababab-fae44bcf9031.latent",
+        ),
+        (
+            dict(model="m", fps=4.0, window=8, max_seconds=12.5, device="cpu", dtype="bfloat16"),
+            True,
+            "abababababababab-5c2e8661c4a5.latent",
+        ),
+        # An int fps or window from elsewhere (an index header) must land on the same file.
+        (dict(model="m", fps=8, window=16, device="cpu", batch=7), True, "abababababababab-f685d2fd5882.latent"),
+    ],
+)
+def test_cache_key_is_unchanged(settings, patches, name, tmp_path):
+    """Cache names recorded before the cache rule moved out of the CLI; existing cache files must
+    keep hitting. A change here needs an OUTPUT_VERSION decision, not a new expected value."""
+    from jepa_scope import cache
+
+    assert cache.cache_path("ab" * 32, cache.EmbedSettings(**settings), patches).name == name
+    assert cache.cache_path("ab" * 32, cache.EmbedSettings(**settings), patches, tmp_path).parent == tmp_path
+
+
 def test_truncated_cache_file_is_treated_as_missing(latent, tmp_path):
-    from jepa_scope import cli
+    from jepa_scope import cache
 
     broken = tmp_path / "broken.latent"
     broken.write_bytes(latent.read_bytes()[:-100])
     with pytest.raises(latent_file.LatentFileError):
         latent_file.load(broken)
     expected = latent_file.read_header(latent)["representation"]["hash"]
-    assert cli._cache_is_valid(latent, expected)
-    assert not cli._cache_is_valid(broken, expected)
-    assert not cli._cache_is_valid(tmp_path / "missing.latent", expected)
+    assert cache.cache_is_valid(latent, expected)
+    assert not cache.cache_is_valid(broken, expected)
+    assert not cache.cache_is_valid(tmp_path / "missing.latent", expected)
 
 
 @pytest.mark.parametrize(
@@ -266,8 +293,39 @@ def test_save_writes_the_current_format_version(latent, tmp_path):
     assert latent_file.read_header(out)["format_version"] == latent_file.FORMAT_VERSION == 2
 
 
+def test_save_uses_a_unique_temporary_file(latent, tmp_path):
+    """Two processes saving the same cache file must not share a temporary name: a directory in
+    the way of the old fixed name ("x.latent.tmp") does not stop a save."""
+    import os
+
+    tensors, header = latent_file.load(latent)
+    out = tmp_path / "out" / "x.latent"
+    out.parent.mkdir()
+    (out.parent / "x.latent.tmp").mkdir()
+    latent_file.save(out, tensors, header)
+    assert latent_file.read_header(out)["source"] == header["source"]
+    mask = os.umask(0)
+    os.umask(mask)
+    assert out.stat().st_mode & 0o777 == 0o666 & ~mask
+    assert sorted(p.name for p in out.parent.iterdir()) == ["x.latent", "x.latent.tmp"]
+
+
+def test_a_failed_save_leaves_no_temporary_file(latent, tmp_path, monkeypatch):
+    tensors, header = latent_file.load(latent)
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(latent_file, "save_file", boom)
+    out = tmp_path / "out"
+    out.mkdir()
+    with pytest.raises(OSError, match="disk full"):
+        latent_file.save(out / "x.latent", tensors, header)
+    assert list(out.iterdir()) == []
+
+
 def test_an_older_format_is_refused_and_re_embedded(latent, tmp_path, capsys):
-    from jepa_scope import cli
+    from jepa_scope import cache
 
     tensors, header = latent_file.load(latent)
     old = tmp_path / "v1.latent"
@@ -275,18 +333,18 @@ def test_an_older_format_is_refused_and_re_embedded(latent, tmp_path, capsys):
     for read in (latent_file.read_header, latent_file.load):
         with pytest.raises(latent_file.LatentFileError, match="re-embed the video"):
             read(old)
-    assert not cli._cache_is_valid(old, header["representation"]["hash"])
+    assert not cache.cache_is_valid(old, header["representation"]["hash"])
     assert "re-embedding" in capsys.readouterr().out
 
 
 def test_cache_is_refused_for_another_output_version_or_representation(latent, capsys, monkeypatch):
-    from jepa_scope import cli
+    from jepa_scope import cache
 
     expected = latent_file.read_header(latent)["representation"]["hash"]
-    assert not cli._cache_is_valid(latent, "0" * 16)
+    assert not cache.cache_is_valid(latent, "0" * 16)
     assert "different representation" in capsys.readouterr().out
-    monkeypatch.setattr(cli, "OUTPUT_VERSION", 999)
-    assert not cli._cache_is_valid(latent, expected)
+    monkeypatch.setattr(cache, "OUTPUT_VERSION", 999)
+    assert not cache.cache_is_valid(latent, expected)
     assert "another output version" in capsys.readouterr().out
 
 

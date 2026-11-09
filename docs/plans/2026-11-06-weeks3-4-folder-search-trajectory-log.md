@@ -106,3 +106,125 @@ The plan is `2026-11-06-weeks3-4-folder-search-trajectory.md`. Entries are newes
     pass). On the real model the identity is unchanged (`550d387c4f4a1862`, hash
     `e8eb61d31255e782`), so nothing re-embeds.
   - **Permanent decision record needed:** No beyond the T10 entry.
+
+- **2026-11-06 — PR 1 merged (T0 and T1, ryangswe/jepa-scope#5); old cache deleted; T2 starts.**
+  - **Evidence:** the owner merged #5 (merge commit `ec26b1a`). 201 version-1 cache files (4.03 GB),
+    T0's set plus one earlier clip's, were deleted; the one version-2 file was kept.
+  - **Impact:** T2–T5 go on branch `week3-index` from `main`.
+  - **Resolution:** T2 delegated to an executor, as the plan routes it.
+  - **Permanent decision record needed:** No.
+
+- **2026-11-06 — T2 complete: the index file contract (`index_file.py`).**
+  - **Evidence:** an executor (Sonnet) wrote the module and its tests; a fresh reviewer (Opus) did
+    two rounds. Round 1 found eight gaps that would have been hard to tighten once users have
+    index files: a relative `root`; non-finite or out-of-range clip numbers and bare `NaN` in the
+    JSON (which would break `/api/meta` for a whole folder); negative clip ids; path holes and
+    duplicates; loosely shaped `skipped` and `sha256`; an unchecked `mean`; and a fixed temporary
+    name. Round 2 found that its own suggested ":" rule rejected legitimate timestamped names, plus
+    a fixed file mode and a temporary file placed beside a symlink's target. All are fixed; the
+    path rule is now public as `is_valid_clip_path`, and T4 skips failing files instead of
+    crashing. The fast suite passes (235). Every check was break-tested by removing it.
+  - **Impact:** T3 builds on `Index`, `clip_rows` and `clip_vector`.
+  - **Resolution:** committed on `week3-index`.
+  - **Permanent decision record needed:** Yes, at T10 (the index file as a versioned contract).
+
+- **2026-11-06 — T3 complete: brute-force search (`search.py`).**
+  - **Evidence:** an executor (Sonnet) wrote the module; a fresh reviewer (Opus) did two rounds.
+    Round 1 found two real defects. First, ties were not ordered by `(clip, window)` at the
+    model's width on this Mac: Accelerate's float32 product gives exact duplicates scores 1 ulp
+    apart depending on row position (16 of 100 seeds out of order); candidates are now rescored
+    in float64 and ranked on that. Second, overlap was decided by start-time difference, which
+    real timestamp jitter breaks (about half of non-overlapping pairs looked overlapping); it is
+    now decided by window number (`|w1 - w2| * stride < frames`). It also had the centring mean
+    recomputed in float64 so identical clips are reliably "unavailable", fixed the reason
+    wording, and added `DEFAULT_SIMILARITY` and `nearest_window` for T4. Round 2 passed; its
+    three small follow-ups (a suppression test, a clipping test with teeth, and `MAX_K = 1000`
+    so one request cannot allocate hundreds of megabytes) were added by the lead.
+  - **Measured (estimates for the plan, this laptop, 30,000 × 1024):** `prepare` about 0.1 s;
+    a moment query about 1.5 ms; a clip query about 1 ms. The plan's 30 ms estimate was ten times
+    too pessimistic.
+  - **Deviation:** the search tests are in `tests/test_search.py`, not `tests/test_index.py`.
+  - **Impact:** T4's `search` command uses `query_vector`, `search_moments`, `search_clips` and
+    `nearest_window`; T6 maps `k > MAX_K` to a 400. T4 should repeat the window-weighted-mean
+    check against the indexer's output.
+  - **Permanent decision record needed:** Yes, at T10 (search as plain cosine over window means).
+
+- **2026-11-08 — T4 complete: the indexer and the `index` and `search` commands.**
+  - **Evidence:** an executor (Opus) wrote `cache.py`, `indexing.py`, the two commands, 35 tests
+    in `tests/test_indexing.py` and a README section, and break-checked 30 rules. The cache
+    file names are byte-identical to the old `cli._cache_path` (pinned by a test, and checked by
+    the reviewer against the pre-T4 code), so no `OUTPUT_VERSION` question arose. The tiny
+    encoder's exact copy scores within `1e-6` of 1.0 by clip and at every window. A fresh
+    reviewer (Opus) found no critical defects but required three changes. Skips caused by the
+    environment (out of memory, `OSError`, any `RuntimeError`) were remembered forever; now only
+    content causes are remembered, keyed on size, mtime and the jepa-scope version. Two hard
+    checks (a representation mismatch, a file changed while it was indexed) had no test. And
+    `--centre` was silently dropped by the next refresh. The fix round also made query
+    resolution in `search` prefer an existing file and match by hash, refused a query that
+    needs an unavailable device with a message, added the shared `find_cache_file` and
+    `EmbedSettings.from_index` for T6, stopped a symlinked index file from forcing rebuilds, and
+    gave `latent_file.save` a unique temporary file so two processes embedding one video cannot
+    collide. Round 2 passed. The lead added its optional follow-ups: the device check for an
+    outside query now runs only when the query must be embedded, so a cached query works on any
+    machine; a test that PyAV's own `OSError` subclasses are not remembered; a test that the
+    choices survive a rebuild of an index with damaged tensors; and a README line. Each new rule
+    was break-checked. Deferred: reading the umask once at import (round 2 noted that `_umask()`
+    sets it to 0 briefly, which matters only if files are saved from threads; T6 does not, and
+    the umask tests need the live value). The fast suite passes.
+  - **Lead decision (mid-task):** `--centre` and `--recursive` are sticky. A refresh keeps the
+    choices the existing index recorded unless `--centre/--no-centre` or
+    `--recursive/--no-recursive` is given, and `recursive` is a new required index header key.
+    The index contract is not merged, so `INDEX_FORMAT_VERSION` stays 1. Without this, T6's
+    `jepa-scope <folder>` would silently switch a centred, recursive index back to plain cosine
+    and drop every subfolder clip.
+  - **Deviations:** the tests are in `tests/test_indexing.py`, not `tests/test_index.py`. The
+    model parameter of `build_or_refresh` is a `ModelProvider` named `model` (it describes the
+    representation without weights and loads the encoder lazily) instead of `encoder_factory`.
+    Files skipped for a content reason are remembered in `skipped` with `sha256`, `size`,
+    `mtime_ns` and the version, so a folder holding one short clip does not load the model on
+    every refresh. An index whose recorded root is another folder is rebuilt.
+  - **Measured (this laptop, MPS, 10 Kinetics-mini val clips of 10 s, 21 MB):** the first build
+    took 34 s (about 0.32 s of embedding per second of video, against the 0.35 s estimate). A
+    refresh with nothing new takes 3.2 to 3.8 s with no model load, against the "under two
+    seconds" estimate; almost all of it is importing transformers and torchvision inside
+    `Encoder.describe`, which loads the video processor for the preprocessing hash. Memoising
+    the description is possible later and not needed now. `search` on an indexed clip takes
+    0.7 s end to end, and the query itself is far below a millisecond at 86 windows (T3 measured
+    1.5 ms at 30,000).
+  - **Impact:** T5 builds its index with `build_or_refresh`. T6 uses `find_cache_file` and
+    `EmbedSettings.from_index` to find a clip's `.latent`, reads only `path` and `reason` from
+    `skipped`, and passes `centre=None, recursive=None` from the default command.
+  - **Permanent decision record needed:** Yes, at T10 (folded into the index contract entry: the
+    sticky choices and the remembered skips).
+
+- **2026-11-08 — T5 complete: the product code path reproduces T0 exactly.**
+  - **Evidence:** `test_search_reproduces_experiment` (opt-in) copies the 50 frozen val clips
+    into a folder with one subfolder per class, indexes it with `build_or_refresh` at the CLI
+    defaults (recursive), and scores retrieval with `nearest_clips` and `nearest_moments`. One
+    run, 136 s on this laptop (MPS), of which 124 s was the first index (40 clips embedded, 10
+    already cached by T4's real-folder run) and 10 s the composite index (one clip embedded). No
+    download: the clips come from the cached dataset snapshot (95 MB, fetched in T0).
+  - **Numbers (val, default (a), plain cosine):** clip-level top-1 42/50 (0.84), T0 42/50, with
+    identical per-class hits (archery 6, bowling 10, flying kite 7, high jump 10, marching 9).
+    Window-level top-1 0.7427, identical to T0. Both bars are met (0.60 rate; margin 27 clips
+    over T0's colour baseline of 15, against 8 needed). Localisation through
+    `nearest_moments(same_clip=False)`, the viewer's default, passes 16/16, with no top hit on a
+    transition window. Descriptively, with `same_clip=True` only 7 of the 16 queries pass: 9 top
+    hits (every bowling and flying-kite query, and archery at 3 s) are a non-overlapping later
+    window of the query's own clip, which is nearer than the composite's copy of the same
+    moment. The README (T10) should say that within one clip, "similar moments" mostly finds
+    other moments of the same scene.
+  - **Deviations:** the clips are copied from the cached snapshot instead of
+    `snapshot_download(local_dir=...)`, which would download 95 MB again; the index is still
+    never written beside the Hugging Face cache. T0 removed composite windows that cross a
+    segment boundary from the candidates, while `nearest_moments` keeps them (the plan called the
+    two candidate sets identical, which was not quite true), so a top hit on such a window is
+    scored as a miss and counted; there were none. The margin bar uses T0's recorded colour
+    baseline (`retrieval_eval.T0_VAL`) instead of recomputing it. The composite builder moved into
+    `_composite_sources` and `_composite`, shared with T0's test.
+  - **Review:** a fresh reviewer (Sonnet) found that only the clip-level result was asserted, so
+    a broken `nearest_moments` could pass; the test now also holds the window-level rate to
+    within 0.02 of T0's and localisation to at least 15 of 16, and was rerun from the cache
+    (passed). It confirmed the composite refactor is behaviour-preserving.
+  - **Impact:** T10 takes these numbers into the README. PR 2 (T2 to T5) is ready to open.
+  - **Permanent decision record needed:** No (results; T10 records the search decision).

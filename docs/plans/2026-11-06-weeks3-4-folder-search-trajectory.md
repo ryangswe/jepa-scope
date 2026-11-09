@@ -6,7 +6,8 @@
   adversarial review and one outside review (see "Plan review")
 - **Spec / source:** `docs/roadmap.md`, "Next" item 1 and the project section's MVP schedule; the
   2026-11-05 process decision that milestones follow the roadmap's weekly order
-- **Branch:** `week3-folder-search` (T0–T7), then `week4-trajectory` (T8–T10)
+- **Branch:** one per pull request: `week3-folder-search` (T0–T1, merged as #5), `week3-index`
+  (T2–T5), then branches for T6–T7 and T8–T10
 
 ## Goal
 
@@ -565,7 +566,7 @@ flowchart LR
 
 ### T2 — Week 3. The index file contract
 
-- **Status:** Pending
+- **Status:** Complete
 - **Dependencies:** T1
 - **Parallel group:** Sequential
 - **Complexity:** ROUTINE
@@ -593,7 +594,7 @@ flowchart LR
 
 ### T3 — Week 3. Search on hand-built vectors
 
-- **Status:** Pending
+- **Status:** Complete
 - **Dependencies:** T2
 - **Parallel group:** Sequential
 - **Complexity:** ROUTINE
@@ -636,7 +637,7 @@ flowchart LR
 
 ### T4 — Week 3. The indexer and the CLI
 
-- **Status:** Pending
+- **Status:** Complete
 - **Dependencies:** T3
 - **Parallel group:** Sequential (optional overlap with T6, see Dependency summary)
 - **Complexity:** STRONG
@@ -645,7 +646,10 @@ flowchart LR
 - **Expected files/workspaces:** `src/jepa_scope/indexing.py` (new), `src/jepa_scope/cache.py`
   (new), `src/jepa_scope/cli.py`, `tests/test_index.py`, `README.md`
 - **Objective:** `build_or_refresh(folder, encoder_factory, settings, out, recursive, patches,
-  centre, verify, log)` as in Approach. Move `cli._cache_path` and `_cache_is_valid` into a small
+  centre, verify, log)` as in Approach. Files whose relative path fails
+  `index_file.is_valid_clip_path` (a backslash, a NUL or a Windows drive prefix) are listed under
+  `skipped` with the reason, so one oddly named file never stops the index from being written
+  (added after T2's review). Move `cli._cache_path` and `_cache_is_valid` into a small
   `cache.py` so `indexing.py` does not import the CLI; the refresh recomputes the cache path from
   the current settings for both the with-patches and without-patches variants. The encoder is
   created lazily, only when a clip must be embedded, so a refresh with nothing new never loads the
@@ -689,7 +693,7 @@ flowchart LR
 
 ### T5 — Week 3. The real code path reproduces T0
 
-- **Status:** Pending
+- **Status:** Complete
 - **Dependencies:** T4
 - **Parallel group:** Sequential (optional overlap with T7)
 - **Complexity:** ROUTINE (the bars and the recipe are T0's)
