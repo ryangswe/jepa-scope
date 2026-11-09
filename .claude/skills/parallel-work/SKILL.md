@@ -7,8 +7,8 @@ description: Rules for concurrent work — worktrees for code-writing workers th
 
 ## Concurrency and worktrees
 
-- A parallel group in a plan is eligibility, not a schedule: the plan says which tasks actually
-  run at the same time.
+- Tasks that could overlap are not a schedule: the plan says which ones actually run at the same
+  time, in the table below.
 - **Every concurrent code-writing worker gets its own worktree**, including when the lead and one
   worker both write. Different files do not make one checkout safe: the branch, index, working
   tree, generated files and running commands are shared. Read-only workers, sequential work and a
@@ -27,6 +27,26 @@ description: Rules for concurrent work — worktrees for code-writing workers th
   does not get the repository's `.claude/agents` types: `planner`, `executor` and `reviewer`
   are "not found". Dispatch `general-purpose` (or `Plan` for read-only planning), set the model
   the agent file names, and make the brief's first line "read `.claude/agents/<name>.md` first".
+
+## In the plan
+
+Add this to a plan whose tasks will run at the same time; a sequential plan leaves it out. Name
+only the tasks that actually overlap.
+
+| Task | Concurrent with | Worker/session | Writes files? | Base ref | Isolation | Shared mutable resources | Integration |
+|---|---|---|---:|---|---|---|---|
+| T2 | T3 | Executor | Yes | `<branch/SHA>` | Worktree | None | Cherry-pick |
+| T3 | T2 | Research worker | No | `<branch/SHA>` | Read-only shared checkout | None | Report only |
+
+For each task in the table, confirm:
+
+- **Reason:** why running it at the same time is useful or necessary.
+- **Isolation:** main checkout, read-only shared checkout, worktree, or an external environment.
+- **Base ref:** the exact branch or commit.
+- **Tracked inputs available:** yes, or how they are provisioned.
+- **Shared resources:** none, or the datasets, caches, GPUs, ports, databases or accounts it uses.
+- **Output ownership:** the directories, files or artifacts this task owns.
+- **Integration method:** direct, merge, cherry-pick or artifact handoff.
 
 ## Parallel lead sessions
 

@@ -25,9 +25,5 @@ plan's `Status:` line disagree.
   the plan stays a lean spec.
 - **On Done**, compress the log into the completion summary (outcome, deviations, follow-ups,
   PRs), then delete the `-log.md` file. Git keeps the full log.
-- **Write the lesson field** (at most one, or `NO_ENTRY`), then list earlier ones with
-  `rg -n '^- \*\*Lesson:\*\* cue' docs/plans`. When a lesson repeats one from an earlier plan,
-  promote it: a line in `CLAUDE.md` or an agent file, or better a hook or a check, which cannot be
-  skipped the way prose can.
 
 Small fixes and one-sitting features don't need a plan file.

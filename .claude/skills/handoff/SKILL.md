@@ -57,7 +57,7 @@ size, offer this skill at the next natural break.
 5. **Print the starting prompt** in one code block, at most ten lines, for the owner to paste into
    a new session:
    - repository and branch;
-   - the model and effort the role runs on, if `CLAUDE.md` names one (its model routing);
+   - the model and effort the role runs on, from its agent file or the lead line in `CLAUDE.md`;
    - where to read: the plan and its section, the role's handoff file, or the handoff commit by
      its short hash;
    - the next step, in one line;

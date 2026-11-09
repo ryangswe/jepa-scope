@@ -61,6 +61,12 @@ Rank findings by impact:
   should be fixed before completion.
 - **Minor:** worth doing, does not block.
 
+A missing or stale record is Minor: a `Missed by:` line, a plan's `Status:` line or log, a
+decision record, release notes, a deviation the plan does not mention. It is Major only when the
+gap would let something ship that nobody approved, or hide a known bug from the people who would
+fix it. The code a record describes is judged on its own: a record that says a case is handled is
+a claim to check in the code, not evidence that it is.
+
 The verdict is CHANGES_REQUIRED when FINDINGS has a Critical or Major item; Minor findings and
 unresolved questions alone allow PASS.
 
