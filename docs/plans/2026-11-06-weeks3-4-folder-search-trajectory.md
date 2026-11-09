@@ -693,7 +693,7 @@ flowchart LR
 
 ### T5 — Week 3. The real code path reproduces T0
 
-- **Status:** Pending
+- **Status:** Complete
 - **Dependencies:** T4
 - **Parallel group:** Sequential (optional overlap with T7)
 - **Complexity:** ROUTINE (the bars and the recipe are T0's)

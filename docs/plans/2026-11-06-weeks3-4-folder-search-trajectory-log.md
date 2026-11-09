@@ -196,3 +196,35 @@ The plan is `2026-11-06-weeks3-4-folder-search-trajectory.md`. Entries are newes
     `skipped`, and passes `centre=None, recursive=None` from the default command.
   - **Permanent decision record needed:** Yes, at T10 (folded into the index contract entry: the
     sticky choices and the remembered skips).
+
+- **2026-11-08 — T5 complete: the product code path reproduces T0 exactly.**
+  - **Evidence:** `test_search_reproduces_experiment` (opt-in) copies the 50 frozen val clips
+    into a folder with one subfolder per class, indexes it with `build_or_refresh` at the CLI
+    defaults (recursive), and scores retrieval with `nearest_clips` and `nearest_moments`. One
+    run, 136 s on this laptop (MPS), of which 124 s was the first index (40 clips embedded, 10
+    already cached by T4's real-folder run) and 10 s the composite index (one clip embedded). No
+    download: the clips come from the cached dataset snapshot (95 MB, fetched in T0).
+  - **Numbers (val, default (a), plain cosine):** clip-level top-1 42/50 (0.84), T0 42/50, with
+    identical per-class hits (archery 6, bowling 10, flying kite 7, high jump 10, marching 9).
+    Window-level top-1 0.7427, identical to T0. Both bars are met (0.60 rate; margin 27 clips
+    over T0's colour baseline of 15, against 8 needed). Localisation through
+    `nearest_moments(same_clip=False)`, the viewer's default, passes 16/16, with no top hit on a
+    transition window. Descriptively, with `same_clip=True` only 7 of the 16 queries pass: 9 top
+    hits (every bowling and flying-kite query, and archery at 3 s) are a non-overlapping later
+    window of the query's own clip, which is nearer than the composite's copy of the same
+    moment. The README (T10) should say that within one clip, "similar moments" mostly finds
+    other moments of the same scene.
+  - **Deviations:** the clips are copied from the cached snapshot instead of
+    `snapshot_download(local_dir=...)`, which would download 95 MB again; the index is still
+    never written beside the Hugging Face cache. T0 removed composite windows that cross a
+    segment boundary from the candidates, while `nearest_moments` keeps them (the plan called the
+    two candidate sets identical, which was not quite true), so a top hit on such a window is
+    scored as a miss and counted; there were none. The margin bar uses T0's recorded colour
+    baseline (`retrieval_eval.T0_VAL`) instead of recomputing it. The composite builder moved into
+    `_composite_sources` and `_composite`, shared with T0's test.
+  - **Review:** a fresh reviewer (Sonnet) found that only the clip-level result was asserted, so
+    a broken `nearest_moments` could pass; the test now also holds the window-level rate to
+    within 0.02 of T0's and localisation to at least 15 of 16, and was rerun from the cache
+    (passed). It confirmed the composite refactor is behaviour-preserving.
+  - **Impact:** T10 takes these numbers into the README. PR 2 (T2 to T5) is ready to open.
+  - **Permanent decision record needed:** No (results; T10 records the search decision).

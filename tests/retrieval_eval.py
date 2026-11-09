@@ -47,6 +47,16 @@ COMPOSITE_FPS = 8
 QUERY_WINDOWS = 4  # windows starting at 0, 1, 2 and 3 s lie fully inside a 5 s segment
 TOLERANCE_SECONDS = 1.0
 
+# T0's recorded result on the val split, for the default (a). T5 reproduces it through the product
+# code; the numbers are in the plan's execution log (2026-11-06-weeks3-4-folder-search-trajectory).
+T0_VAL = {
+    "default": "a",
+    "clip_top1_count": 42,
+    "window_top1_rate": 0.7427184466019418,
+    "colour_baseline": 15,  # the stronger of the two colour baselines (whole clip)
+    "localisation_passed": 16,
+}
+
 
 @dataclass
 class Clip:
